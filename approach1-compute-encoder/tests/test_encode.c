@@ -12,6 +12,7 @@
 
 #include "encoder_h264.h"
 #include "bitstream.h"
+#include "cavlc.h"
 
 /*
  * Regression test for the Intra16x16 luma DC transpose bug fixed in commit
