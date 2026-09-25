@@ -157,12 +157,17 @@ layout(push_constant) uniform PushConstants {
     uint num_slices;
 } pcs;
 
-/* Which slice MB `mb` belongs to, replicating the CPU's
- * start_mb(s) = floor(s*total_mbs/num_slices) partitioning - see the
- * SLICE BOUNDARIES note above. */
+/* Which slice MB `mb` belongs to, exactly matching the CPU's
+ * start_mb(s) = floor(s*total_mbs/num_slices) partitioning across all
+ * grid dimensions and slice counts. */
 uint slice_of(uint mb) {
     uint total_mbs = pcs.width_in_mbs * pcs.height_in_mbs;
-    return (mb * pcs.num_slices) / total_mbs;
+    if (pcs.num_slices <= 1u || total_mbs == 0u) return 0u;
+    uint s = (mb * pcs.num_slices) / total_mbs;
+    if (s >= pcs.num_slices) s = pcs.num_slices - 1u;
+    while (s + 1u < pcs.num_slices && ((s + 1u) * total_mbs) / pcs.num_slices <= mb) { s++; }
+    while (s > 0u && (s * total_mbs) / pcs.num_slices > mb) { s--; }
+    return s;
 }
 
 /* Intra 16x16 prediction modes - MUST match cavlc.h's H264_I16x16_* values,

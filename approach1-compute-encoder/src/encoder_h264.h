@@ -293,6 +293,23 @@ void h264_encoder_destroy(h264_encoder_t *encoder);
 void h264_intra16_luma_dc_transform(const int dc_in[4][4], int qp,
                                      int dc_out[16], int dc_out_pretranspose[16]);
 
+/**
+ * h264_sanitize_i16_mode - Validate and clamp an Intra 16x16 prediction mode
+ * against spatial block availability per ITU-T H.264 Section 8.3.3.
+ *
+ * Mode 0 (Vertical) requires top_avail.
+ * Mode 1 (Horizontal) requires left_avail.
+ * Mode 2 (DC) is always legal.
+ * Mode 3 (Plane) requires both top_avail and left_avail.
+ */
+int h264_sanitize_i16_mode(int mode, bool top_avail, bool left_avail);
+
+/**
+ * h264_sanitize_chroma_mode - Validate and clamp a Chroma Intra prediction mode
+ * against spatial block availability per ITU-T H.264 Section 8.3.4 (Table 8-3).
+ */
+int h264_sanitize_chroma_mode(int mode, bool top_avail, bool left_avail);
+
 #ifdef __cplusplus
 }
 #endif

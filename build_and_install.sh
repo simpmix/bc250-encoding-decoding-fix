@@ -6,6 +6,26 @@
 
 set -e
 
+WITH_AUDIO_FIX=0
+for arg in "$@"; do
+    case "$arg" in
+        --with-audio-fix)
+            WITH_AUDIO_FIX=1
+            ;;
+        --without-audio-fix)
+            WITH_AUDIO_FIX=0
+            ;;
+        -h|--help)
+            echo "Usage: ./build_and_install.sh [options]"
+            echo "Options:"
+            echo "  --with-audio-fix     Install legacy DKMS audio fix (only for older kernels; deprecated on modern/CachyOS kernels)"
+            echo "  --without-audio-fix  Skip DKMS audio fix (default)"
+            echo "  -h, --help           Show this help message"
+            exit 0
+            ;;
+    esac
+done
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -183,10 +203,17 @@ elif [ -f "/etc/environment" ]; then
     fi
 fi
 
-# Optional: Install Audio Fix via DKMS if available
-if [ -d "$SCRIPT_DIR/audio-fix" ] && command -v dkms &> /dev/null; then
-    echo -e "\n${BLUE}Configuring Audio Fix with DKMS...${NC}"
-    (cd "$SCRIPT_DIR/audio-fix" && $SUDO bash ./install_dkms.sh) || echo -e "${YELLOW}DKMS setup skipped.${NC}"
+# Optional: Install Audio Fix via DKMS if explicitly requested
+if [ "$WITH_AUDIO_FIX" -eq 1 ]; then
+    if [ -d "$SCRIPT_DIR/audio-fix" ] && command -v dkms &> /dev/null; then
+        echo -e "\n${BLUE}Configuring Audio Fix with DKMS (--with-audio-fix specified)...${NC}"
+        (cd "$SCRIPT_DIR/audio-fix" && $SUDO bash ./install_dkms.sh) || echo -e "${YELLOW}DKMS setup skipped.${NC}"
+    else
+        echo -e "\n${YELLOW}Audio fix requested but audio-fix directory or dkms not available. Skipping.${NC}"
+    fi
+else
+    echo -e "\n${BLUE}[*] Audio Fix DKMS skipped by default (native kernel audio supported on modern kernels and CachyOS).${NC}"
+    echo -e "    Pass ${BOLD}--with-audio-fix${NC} if you are on an older kernel that requires the legacy DKMS module."
 fi
 
 # Configuration summary

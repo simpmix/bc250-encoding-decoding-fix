@@ -274,6 +274,56 @@ static void test_multislice_parallel_encoding(void) {
     printf("[test_encode] Multi-threaded multi-slice parallel encoding verified.\n");
 }
 
+/*
+ * Regression test for Issue #49: Steam Link green screen with H.264 multi-slice encoding.
+ * Verifies that h264_sanitize_i16_mode and h264_sanitize_chroma_mode strictly enforce
+ * ITU-T H.264 Section 8.3.3 and 8.3.4 neighbor availability across slice boundaries
+ * and image edges, preventing decoders from aborting with:
+ *   "top block unavailable for requested intra mode"
+ *   "left block unavailable for requested intra mode"
+ */
+static void test_slice_boundary_intra_sanitization(void) {
+    printf("[test_encode] Testing slice boundary intra mode sanitization (Issue #49)...\n");
+
+    /* Case 1: MB 0,0 or first MB in any slice (!top_avail, !left_avail) */
+    for (int mode = 0; mode < 4; mode++) {
+        assert(h264_sanitize_i16_mode(mode, false, false) == H264_I16x16_DC);
+        assert(h264_sanitize_chroma_mode(mode, false, false) == H264_CHROMA_DC);
+    }
+
+    /* Case 2: Top row of a slice (!top_avail, left_avail) */
+    /* VERT (0) and PLANE (3) are illegal without top neighbor -> fallback to HORIZ (1) */
+    assert(h264_sanitize_i16_mode(H264_I16x16_VERT, false, true) == H264_I16x16_HORIZ);
+    assert(h264_sanitize_i16_mode(H264_I16x16_PLANE, false, true) == H264_I16x16_HORIZ);
+    assert(h264_sanitize_i16_mode(H264_I16x16_HORIZ, false, true) == H264_I16x16_HORIZ);
+    assert(h264_sanitize_i16_mode(H264_I16x16_DC, false, true) == H264_I16x16_DC);
+
+    assert(h264_sanitize_chroma_mode(H264_CHROMA_VERT, false, true) == H264_CHROMA_HORIZ);
+    assert(h264_sanitize_chroma_mode(H264_CHROMA_PLANE, false, true) == H264_CHROMA_HORIZ);
+    assert(h264_sanitize_chroma_mode(H264_CHROMA_HORIZ, false, true) == H264_CHROMA_HORIZ);
+    assert(h264_sanitize_chroma_mode(H264_CHROMA_DC, false, true) == H264_CHROMA_DC);
+
+    /* Case 3: Left column of picture/slice (top_avail, !left_avail) */
+    /* HORIZ (1) and PLANE (3) are illegal without left neighbor -> fallback to VERT (0) */
+    assert(h264_sanitize_i16_mode(H264_I16x16_HORIZ, true, false) == H264_I16x16_VERT);
+    assert(h264_sanitize_i16_mode(H264_I16x16_PLANE, true, false) == H264_I16x16_VERT);
+    assert(h264_sanitize_i16_mode(H264_I16x16_VERT, true, false) == H264_I16x16_VERT);
+    assert(h264_sanitize_i16_mode(H264_I16x16_DC, true, false) == H264_I16x16_DC);
+
+    assert(h264_sanitize_chroma_mode(H264_CHROMA_HORIZ, true, false) == H264_CHROMA_VERT);
+    assert(h264_sanitize_chroma_mode(H264_CHROMA_PLANE, true, false) == H264_CHROMA_VERT);
+    assert(h264_sanitize_chroma_mode(H264_CHROMA_VERT, true, false) == H264_CHROMA_VERT);
+    assert(h264_sanitize_chroma_mode(H264_CHROMA_DC, true, false) == H264_CHROMA_DC);
+
+    /* Case 4: Interior macroblock (top_avail, left_avail) -> all modes preserved */
+    for (int mode = 0; mode < 4; mode++) {
+        assert(h264_sanitize_i16_mode(mode, true, true) == mode);
+        assert(h264_sanitize_chroma_mode(mode, true, true) == mode);
+    }
+
+    printf("[test_encode] Slice boundary intra mode sanitization passed.\n");
+}
+
 int main(void) {
     /* Isolate test execution from host environment variables */
     const char *orig_slices = getenv("BC250_SLICES_PER_FRAME");
@@ -289,6 +339,7 @@ int main(void) {
     test_intra16_dc_transpose();
     test_rate_control_cqp_and_vbr();
     test_multislice_parallel_encoding();
+    test_slice_boundary_intra_sanitization();
 
     printf("[test_encode] Starting H.264 end-to-end bitstream encoding test...\n");
 

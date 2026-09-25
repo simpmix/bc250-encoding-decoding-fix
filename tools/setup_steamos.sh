@@ -9,6 +9,26 @@
 
 set -e
 
+WITH_AUDIO_FIX=0
+for arg in "$@"; do
+    case "$arg" in
+        --with-audio-fix)
+            WITH_AUDIO_FIX=1
+            ;;
+        --without-audio-fix)
+            WITH_AUDIO_FIX=0
+            ;;
+        -h|--help)
+            echo "Usage: ./tools/setup_steamos.sh [options]"
+            echo "Options:"
+            echo "  --with-audio-fix     Install legacy DKMS audio fix (only for older kernels; deprecated on modern/CachyOS kernels)"
+            echo "  --without-audio-fix  Skip DKMS audio fix (default)"
+            echo "  -h, --help           Show this help message"
+            exit 0
+            ;;
+    esac
+done
+
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
@@ -206,27 +226,32 @@ if [ -n "$CURRENT_USER" ] && [ "$CURRENT_USER" != "root" ]; then
 fi
 
 echo -e "\n${BOLD}[5/5] Setting Up Audio Clock Fix...${NC}"
-if [ -d "$REPO_ROOT/audio-fix" ]; then
-    cd "$REPO_ROOT/audio-fix"
-    if command -v dkms &> /dev/null; then
-        if $SUDO bash ./install_dkms.sh; then
-            echo -e "  ${GREEN}✓ Audio fix installed via DKMS (auto-rebuilds on kernel updates).${NC}"
+if [ "$WITH_AUDIO_FIX" -eq 1 ]; then
+    if [ -d "$REPO_ROOT/audio-fix" ]; then
+        cd "$REPO_ROOT/audio-fix"
+        if command -v dkms &> /dev/null; then
+            if $SUDO bash ./install_dkms.sh; then
+                echo -e "  ${GREEN}✓ Audio fix installed via DKMS (auto-rebuilds on kernel updates).${NC}"
+            else
+                echo -e "  ${YELLOW}! DKMS setup encountered an issue (kernel headers may be needed).${NC}"
+                echo -e "    On SteamOS, install headers via:"
+                echo -e "      ${BOLD}sudo steamos-readonly disable && sudo pacman -S --needed linux-neptune-headers dkms${NC}"
+            fi
         else
-            echo -e "  ${YELLOW}! DKMS setup encountered an issue (kernel headers may be needed).${NC}"
-            echo -e "    On SteamOS, install headers via:"
-            echo -e "      ${BOLD}sudo steamos-readonly disable && sudo pacman -S --needed linux-neptune-headers dkms${NC}"
+            echo -e "  ${YELLOW}! DKMS not installed.${NC}"
+            echo -e "  -> Attempting direct module compilation..."
+            if make && $SUDO make install && $SUDO modprobe bc250_audio_fix 2>/dev/null; then
+                echo -e "  ${GREEN}✓ Audio module compiled and loaded.${NC}"
+            else
+                echo -e "  ${YELLOW}! Direct module compilation skipped. To enable HDMI/DP audio, install headers:${NC}"
+                echo -e "      ${BOLD}sudo steamos-readonly disable && sudo pacman -S --needed linux-neptune-headers dkms${NC}"
+            fi
         fi
-    else
-        echo -e "  ${YELLOW}! DKMS not installed.${NC}"
-        echo -e "  -> Attempting direct module compilation..."
-        if make && $SUDO make install && $SUDO modprobe bc250_audio_fix 2>/dev/null; then
-            echo -e "  ${GREEN}✓ Audio module compiled and loaded.${NC}"
-        else
-            echo -e "  ${YELLOW}! Direct module compilation skipped. To enable HDMI/DP audio, install headers:${NC}"
-            echo -e "      ${BOLD}sudo steamos-readonly disable && sudo pacman -S --needed linux-neptune-headers dkms${NC}"
-        fi
+        cd "$REPO_ROOT"
     fi
-    cd "$REPO_ROOT"
+else
+    echo -e "  ${BLUE}[*] Audio Fix skipped by default (modern kernels/CachyOS support audio natively).${NC}"
+    echo -e "      Pass ${BOLD}--with-audio-fix${NC} if running on an older kernel that requires the legacy module."
 fi
 
 echo -e "\n${GREEN}======================================================${NC}"

@@ -190,11 +190,17 @@ const uint MODE_HORIZ = 1u;
 const uint MODE_DC    = 2u;
 const uint MODE_PLANE = 3u;
 
-/* Which slice MB `mb` belongs to - see residual_predict.comp's SLICE
- * BOUNDARIES comment for the derivation. */
+/* Which slice MB `mb` belongs to, exactly matching the CPU's
+ * start_mb(s) = floor(s*total_mbs/num_slices) partitioning across all
+ * grid dimensions and slice counts. */
 uint slice_of(uint mb) {
     uint total_mbs = pcs.width_in_mbs * pcs.height_in_mbs;
-    return (mb * pcs.num_slices) / total_mbs;
+    if (pcs.num_slices <= 1u || total_mbs == 0u) return 0u;
+    uint s = (mb * pcs.num_slices) / total_mbs;
+    if (s >= pcs.num_slices) s = pcs.num_slices - 1u;
+    while (s + 1u < pcs.num_slices && ((s + 1u) * total_mbs) / pcs.num_slices <= mb) { s++; }
+    while (s > 0u && (s * total_mbs) / pcs.num_slices > mb) { s--; }
+    return s;
 }
 
 int clip1(int v) { return clamp(v, 0, 255); }

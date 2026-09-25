@@ -887,6 +887,32 @@ static int gpu_chroma_pred_mode(const uint32_t *pred_modes, uint32_t mb_idx) {
     return pred_modes ? (int)((pred_modes[mb_idx] >> 2) & 0x3u) : H264_CHROMA_DC;
 }
 
+int h264_sanitize_i16_mode(int mode, bool top_avail, bool left_avail) {
+    if (!top_avail && !left_avail) {
+        return H264_I16x16_DC;
+    }
+    if (!top_avail && (mode == H264_I16x16_VERT || mode == H264_I16x16_PLANE)) {
+        return left_avail ? H264_I16x16_HORIZ : H264_I16x16_DC;
+    }
+    if (!left_avail && (mode == H264_I16x16_HORIZ || mode == H264_I16x16_PLANE)) {
+        return top_avail ? H264_I16x16_VERT : H264_I16x16_DC;
+    }
+    return mode;
+}
+
+int h264_sanitize_chroma_mode(int mode, bool top_avail, bool left_avail) {
+    if (!top_avail && !left_avail) {
+        return H264_CHROMA_DC;
+    }
+    if (!top_avail && (mode == H264_CHROMA_VERT || mode == H264_CHROMA_PLANE)) {
+        return left_avail ? H264_CHROMA_HORIZ : H264_CHROMA_DC;
+    }
+    if (!left_avail && (mode == H264_CHROMA_HORIZ || mode == H264_CHROMA_PLANE)) {
+        return top_avail ? H264_CHROMA_VERT : H264_CHROMA_DC;
+    }
+    return mode;
+}
+
 /* Neighbor MV lookup for the P16x16 MVD predictor below: (dx,dy) is a
  * neighbor offset in MB units (e.g. left=(-1,0), top=(0,-1)). Unavailable
  * (off-picture, or belongs to an earlier slice) is reported via *avail. */
@@ -1065,8 +1091,12 @@ static int mb_has_any_chroma_nonzero(const int16_t *quant_levels, const int *dc_
 static void encode_mb_i16x16(bitstream_t *bs, const int16_t *quant_levels, const int *dc_coeff,
                               const uint32_t *pred_modes,
                               uint32_t mb, uint32_t mbx, uint32_t mby, nc_ctx_t *nc, int qp) {
-    int pred_mode = gpu_pred_mode_i16(pred_modes, mb);
-    int chroma_pred_mode = gpu_chroma_pred_mode(pred_modes, mb);
+    bool left_avail = (mbx > 0 && (mb - 1) >= nc->start_mb);
+    bool top_avail  = (mby > 0 && (mb - nc->width_in_mbs) >= nc->start_mb);
+    int raw_luma_mode = gpu_pred_mode_i16(pred_modes, mb);
+    int raw_chroma_mode = gpu_chroma_pred_mode(pred_modes, mb);
+    int pred_mode = h264_sanitize_i16_mode(raw_luma_mode, top_avail, left_avail);
+    int chroma_pred_mode = h264_sanitize_chroma_mode(raw_chroma_mode, top_avail, left_avail);
     {
         const char *dbg = getenv("BC250_DEBUG_I16_MB");
         if (dbg && (uint32_t)atoi(dbg) == mb) {
@@ -1426,7 +1456,10 @@ static void encode_mb_i16x16_cabac(cabac_engine_t *cb, h264_encoder_t *encoder,
                                     const uint32_t *pred_modes,
                                     uint32_t mb, uint32_t mbx, uint32_t mby, nc_ctx_t *nc, int qp,
                                     bool *last_dqp_nonzero) {
-    int pred_mode = gpu_pred_mode_i16(pred_modes, mb);
+    bool left_avail = (mbx > 0 && (mb - 1) >= nc->start_mb);
+    bool top_avail  = (mby > 0 && (mb - nc->width_in_mbs) >= nc->start_mb);
+    int raw_luma_mode = gpu_pred_mode_i16(pred_modes, mb);
+    int pred_mode = h264_sanitize_i16_mode(raw_luma_mode, top_avail, left_avail);
 
     int dc_in[4][4];
     for (int r = 0; r < 4; r++)
@@ -3430,6 +3463,9 @@ int h264_encoder_encode_raw(h264_encoder_t *encoder,
                 int mode = H264_I16x16_DC;
                 if (v_diff * 3 < h_diff * 2) mode = H264_I16x16_VERT;
                 else if (h_diff * 3 < v_diff * 2) mode = H264_I16x16_HORIZ;
+                bool left_avail = (mbx > 0 && (mb - 1) >= start_mb);
+                bool top_avail  = (mby > 0 && (mb - encoder->width_in_mbs) >= start_mb);
+                mode = h264_sanitize_i16_mode(mode, top_avail, left_avail);
                 cavlc_write_mb_i16x16_header(&bs, mode, H264_CHROMA_DC, 0, 0, 0);
             }
         } else {
