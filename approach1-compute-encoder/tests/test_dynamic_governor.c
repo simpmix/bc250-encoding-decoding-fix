@@ -180,6 +180,10 @@ static void test_governor_telemetry_stats(void)
 
 int main(void)
 {
+    /* The governor is off unless a live streaming server runs it; these
+     * tests are about what it does once on. */
+    setenv("BC250_GOVERNOR_ENABLE", "1", 1);
+
     printf("========================================\n");
     printf("BC-250 Dynamic Governor Unit Test\n");
     printf("========================================\n");

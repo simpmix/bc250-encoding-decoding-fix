@@ -24,11 +24,26 @@ void dynamic_governor_init(dynamic_governor_t *gov)
     gov->tier3_threshold_ms = 15.5;
     gov->step_down_hysteresis = 4;
     gov->current_tier = GOV_TIER_0_GPU_FULL;
-    gov->enabled = true;
+    /* ⚠️ Only for a live stream. Every tier trades the picture for time:
+     * tier 1 searches motion less carefully, tier 3 drops the frame and
+     * repeats the last one. That is the right trade when a client is
+     * waiting for the frame, and the wrong one when a file is being
+     * written, where there is no deadline at all. With the thresholds
+     * below, ffmpeg encoding real 1080p50 through the compute H.264
+     * encoder spent 16.3 ms of GPU per frame, tripped tier 3 on every
+     * one, and so repeated every second frame: 24 dB where 37 was there to
+     * be had. BC250_GOVERNOR_ENABLE=1 turns it on for anyone. */
+    gov->enabled = false;
     gov->forced_tier = -1;
     gov->cpu_offload_enabled = false;
 
 #if defined(__linux__)
+    if (program_invocation_short_name &&
+        (strcmp(program_invocation_short_name, "sunshine") == 0 ||
+         strcmp(program_invocation_short_name, "wivrn-server") == 0 ||
+         strcmp(program_invocation_short_name, "wivrn") == 0)) {
+        gov->enabled = true;
+    }
     if (program_invocation_short_name && strcmp(program_invocation_short_name, "sunshine") == 0) {
         /* In Sunshine, frame pacing is managed by the network stream loop.
          * Premature Tier 3 P_Skip failover causes 0.5ms / 32ms latency oscillation.
@@ -58,6 +73,8 @@ void dynamic_governor_init(dynamic_governor_t *gov)
     const char *env_enable = getenv("BC250_GOVERNOR_ENABLE");
     if (env_enable && (strcmp(env_enable, "0") == 0 || strcmp(env_enable, "false") == 0)) {
         gov->enabled = false;
+    } else if (env_enable && (strcmp(env_enable, "1") == 0 || strcmp(env_enable, "true") == 0)) {
+        gov->enabled = true;
     }
 
     const char *env_cpu_me = getenv("BC250_ENABLE_CPU_ME");
