@@ -4090,3 +4090,26 @@ In §30, integer-pel diamond motion search and spatial merge mode were introduce
 #### D. Bitstream & Specification Compliance
 - Strictly maintained the zero chroma drift invariant: all tested motion vectors enforce $dx, dy \equiv 0 \pmod 2$.
 - Bitstream formatting remains 100% compliant with standard reference decoders (FFmpeg reference oracle decodes all frames with zero errors).
+
+
+## 33. Release v0.5.1: Multi-Slice Boundary Sanitization, Optional Audio DKMS & Inter HEVC Pipelining
+
+### 33.1 Multi-Slice Intra Prediction Sanitization (Steam Link Green Screen - Issue #49)
+- **Problem**: When streaming via Steam Link with H.264 multi-slice parallel encoding enabled, decoders aborted parsing macroblocks at slice boundaries with 'ffmpeg error: top block unavailable for requested intra mode' and dropped frames, resulting in a solid green screen.
+- **Root Cause**: Per ITU-T H.264 Section 8.3.3 and 8.3.4, macroblocks at the top edge of any slice cannot utilize Vertical (0) or Plane (3) intra prediction modes because the top neighbor belongs to a different slice or picture boundary. The compute encoder and fallback logic occasionally selected Vertical or Plane modes across slice row 0.
+- **Solution**:
+  - Implemented 'h264_sanitize_i16_mode()' and 'h264_sanitize_chroma_mode()' in 'encoder_h264.c' to rigorously validate and clamp unavailable spatial modes (Vertical/Plane fallback to Horizontal if left available, or DC if neither available).
+  - Enforced mode sanitization in both CAVLC ('encode_mb_i16x16') and CABAC ('encode_mb_i16x16_cabac') pathways, as well as 'h264_encoder_encode_raw()'.
+  - Corrected 'slice_of' calculations in 'intra_wavefront.comp' and 'residual_predict.comp' to strictly mirror CPU floor-division slice boundaries.
+  - Added unit test 'test_slice_boundary_intra_sanitization' in 'tests/test_encode.c'.
+
+### 33.2 Optional Legacy DKMS Audio Fix (CachyOS / Modern Kernel Parity - Issue #54)
+- **Problem**: On modern Linux distributions (such as CachyOS 7.2+), the kernel natively binds DisplayPort/HDMI audio for Cyan Skillfish (BC-250). Running the legacy 'audio-fix' DKMS module caused build conflicts and kernel module clashes.
+- **Solution**:
+  - Updated 'build_and_install.sh', 'tools/setup_bazzite.sh', and 'tools/setup_steamos.sh' to make the DKMS 'audio-fix' opt-in via '--with-audio-fix'.
+  - By default, modern native kernel audio support is preserved without running DKMS installation.
+
+### 33.3 Upstream PR Integrations (MTSistemi PRs #46, #47, #48)
+- **PR #46 ('fix/governor-live')**: Dynamically pins the encoding governor specifically to live streams, eliminating duplicated frames during offline FFmpeg file transcodes.
+- **PR #47 ('feat/h264-x264')**: Integrated 'libx264' backend ('BC250_H264_BACKEND=x264') for H.264 encoding in 'bc250_drv_video.so', delivering 4x faster execution, CABAC optimization, and multi-reference frames while leaving the APU's 40 RDNA2 CUs free for game rendering.
+- **PR #48 ('feat/hevc-enc-inter')**: Full inter-prediction, AMVP/Merge candidate evaluation, 8x8 DCT transforms, dead-zone quantization (-21.8% bit savings), and complexity-based rate control model for H.265/HEVC encoding.
