@@ -435,7 +435,23 @@ VAStatus bc250_CreateSurfaces(VADriverContextP ctx, int width, int height, int f
 VAStatus bc250_CreateSurfaces2(VADriverContextP ctx, unsigned int format, unsigned int width, unsigned int height,
                               VASurfaceID *surfaces, unsigned int num_surfaces,
                               VASurfaceAttrib *attrib_list, unsigned int num_attribs) {
-    (void)attrib_list; (void)num_attribs;
+    if (attrib_list && num_attribs > 0) {
+        for (unsigned int i = 0; i < num_attribs; i++) {
+            if (attrib_list[i].type == VASurfaceAttribMemoryType) {
+                int mem_type = attrib_list[i].value.value.i;
+                /* This driver allocates internal Vulkan-backed surfaces. If an external caller
+                 * requests zero-copy importing of external DMA-BUF memory (such as Gamescope or
+                 * screencasting pipelines requesting DRM_PRIME / DRM_PRIME_2), we must return
+                 * VA_STATUS_ERROR_UNSUPPORTED_MEMORY_TYPE rather than silently ignoring the attributes
+                 * and returning an uninitialized blank surface (which causes solid green or black
+                 * screens in Gamescope, Steam Link, and Sunshine). Returning an error here allows
+                 * callers to correctly fall back to their working copy or EGL blit paths. */
+                if (mem_type != VA_SURFACE_ATTRIB_MEM_TYPE_VA && mem_type != 0) {
+                    return VA_STATUS_ERROR_UNSUPPORTED_MEMORY_TYPE;
+                }
+            }
+        }
+    }
     return bc250_CreateSurfaces(ctx, width, height, format, num_surfaces, surfaces);
 }
 

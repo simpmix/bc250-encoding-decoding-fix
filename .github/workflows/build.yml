@@ -233,7 +233,8 @@ jobs:
           libva-dev:i386 \
           libdrm-dev:i386 \
           libvulkan-dev:i386 \
-          libgomp1:i386
+          libgomp1:i386 \
+          libx264-dev:i386
 
     - name: Configure CMake (32-bit)
       # Tests stay off here: the 64-bit job above already runs the full ctest
