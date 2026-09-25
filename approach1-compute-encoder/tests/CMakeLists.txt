@@ -88,3 +88,11 @@ add_test(NAME CabacRoundtripTest COMMAND test_cabac_roundtrip)
 add_test(NAME McUnitTest COMMAND test_mc)
 add_test(NAME IntraPredUnitTest COMMAND test_pred)
 add_test(NAME HevcTransformUnitTest COMMAND test_hevc_transform)
+
+# The libx264 backend, when the driver was built with it.
+if(X264_FOUND)
+    add_executable(test_x264 test_x264.c)
+    target_include_directories(test_x264 PRIVATE ../src ${X264_INCLUDE_DIRS})
+    target_link_libraries(test_x264 PRIVATE bc250_drv_video ${X264_LINK_LIBRARIES} ${Vulkan_LIBRARIES} ${LIBVA_LIBRARIES} ${DRM_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} m)
+    add_test(NAME X264BackendTest COMMAND test_x264)
+endif()

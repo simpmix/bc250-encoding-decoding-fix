@@ -34,6 +34,13 @@ BuildRequires:  libdrm-devel
 BuildRequires:  vulkan-headers
 BuildRequires:  vulkan-loader-devel
 BuildRequires:  glslang
+# H.264 through libx264, which Fedora itself does not ship: it comes from
+# RPM Fusion. Build --without x264 where that is not enabled, and H.264
+# falls back to the compute encoder.
+%bcond_without x264
+%if %{with x264}
+BuildRequires:  pkgconfig(x264)
+%endif
 
 Requires:       libva
 Requires:       libdrm
@@ -75,6 +82,7 @@ cd approach1-compute-encoder
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=%{_prefix} \
     -DLIBVA_DRIVERS_PATH=%{_libdir}/dri \
+    -DBC250_WITH_X264=%{?with_x264:ON}%{!?with_x264:OFF} \
     -DBUILD_TESTS=OFF
 %cmake_build --target bc250_drv_video compile_shaders
 

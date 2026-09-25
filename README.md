@@ -57,9 +57,9 @@ Bit-exact conformance against official ITU JCT-VC test streams and reference dec
 
 | Profile | Entrypoint | Acceleration | Max Resolution |
 | :--- | :--- | :--- | :--- |
-| `VAProfileH264Baseline` | `VAEntrypointEncSlice` | Vulkan Compute (40 CUs) | 4096x2160 (4K) |
-| `VAProfileH264Main` | `VAEntrypointEncSlice` | Vulkan Compute (40 CUs) + CABAC | 4096x2160 (4K) |
-| `VAProfileH264High` | `VAEntrypointEncSlice` | Vulkan Compute (40 CUs) + CABAC | 4096x2160 (4K) |
+| `VAProfileH264Baseline` | `VAEntrypointEncSlice` | libx264 (compute encoder as fallback) | 4096x2160 (4K) |
+| `VAProfileH264Main` | `VAEntrypointEncSlice` | libx264 (compute encoder as fallback) | 4096x2160 (4K) |
+| `VAProfileH264High` | `VAEntrypointEncSlice` | libx264 (compute encoder as fallback) | 4096x2160 (4K) |
 | `VAProfileHEVCMain` | `VAEntrypointEncSlice` | Vulkan Compute ME + Host Slices | 4096x2160 (4K) |
 | `VAProfileHEVCMain10` | `VAEntrypointEncSlice` | Host Slices, 10-Bit (P010 in) | 4096x2160 (4K) |
 | `VAProfileH264*` | `VAEntrypointVLD` (Decode) | Multi-Threaded CPU Wavefront | 4096x2160 (4K) |

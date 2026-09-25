@@ -75,11 +75,11 @@ else
         echo -e "\n${BOLD}Attempting to install missing build dependencies...${NC}"
         if command -v apt-get &> /dev/null; then
             $SUDO apt-get update
-            $SUDO apt-get install -y build-essential cmake pkg-config libva-dev libdrm-dev libvulkan-dev glslang-tools vainfo
+            $SUDO apt-get install -y build-essential cmake pkg-config libva-dev libdrm-dev libvulkan-dev libx264-dev glslang-tools vainfo
         elif command -v dnf &> /dev/null; then
             $SUDO dnf install -y gcc gcc-c++ cmake pkgconf libva-devel libdrm-devel vulkan-loader-devel glslang libva-utils
         elif command -v pacman &> /dev/null; then
-            $SUDO pacman -S --needed --noconfirm base-devel cmake pkgconf libva libdrm vulkan-devel glslang libva-utils
+            $SUDO pacman -S --needed --noconfirm base-devel cmake pkgconf libva libdrm vulkan-devel x264 glslang libva-utils
         elif command -v zypper &> /dev/null; then
             $SUDO zypper install -y gcc gcc-c++ cmake pkg-config libva-devel libdrm-devel vulkan-devel glslang libva-utils
         else

@@ -15,7 +15,7 @@ pkgdesc="VA-API video encoding and decoding for the AMD BC-250 (Cyan Skillfish)"
 arch=('x86_64')
 url="https://github.com/MTSistemi/bc250-vaapi"
 license=('GPL-3.0-only')
-depends=('libva' 'libdrm' 'vulkan-icd-loader')
+depends=('libva' 'libdrm' 'vulkan-icd-loader' 'x264')
 makedepends=('cmake' 'glslang' 'vulkan-headers' 'pkgconf')
 optdepends=('ffmpeg: to record, stream or play through the driver'
             'libva-utils: vainfo, to see what the driver offers')

@@ -1207,6 +1207,9 @@ VAStatus bc250_RenderPicture(VADriverContextP ctx, VAContextID context, VABuffer
                                 }
 #endif
                                 target_bps = (uint32_t)(base_bps * pow(2.0, (20.0 - (double)q) / 6.0));
+                                /* x264 does real constant quality; the bitrate above
+                                 * is only what the compute encoder falls back on. */
+                                h264_encoder_set_icq_quality(c->h264_enc, (int)q);
                             } else if (c->hevc_enc) {
                                 double base_bps = pixel_rate * 0.0353652;
                                 uint32_t q = 25;
@@ -1220,6 +1223,8 @@ VAStatus bc250_RenderPicture(VADriverContextP ctx, VAContextID context, VABuffer
                         }
 
                         if (c->h264_enc) {
+                            if (rc->bits_per_second > 0)
+                                h264_encoder_set_icq_quality(c->h264_enc, 0);
                             if (target_bps > 0) {
                                 h264_encoder_set_bitrate(c->h264_enc, target_bps);
                                 bool cbr_intent = (rc->bits_per_second > 0) &&
@@ -1488,7 +1493,7 @@ VAStatus bc250_EndPicture(VADriverContextP ctx, VAContextID context) {
 
         int written = -1;
         gpu_compute_debug_dump_real_input(&data->gpu, &surf->image, surf->memory, surf->width, surf->height);
-        if (c->h264_enc && bc250_pipeline_enabled()) {
+        if (c->h264_enc && bc250_pipeline_enabled() && !h264_encoder_uses_x264(c->h264_enc)) {
             /* Pipelined: submit THIS frame's GPU work first, then finish the
              * PREVIOUS frame on the CPU. */
             h264_pending_frame_t just_submitted;

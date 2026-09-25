@@ -258,6 +258,22 @@ target_link_libraries(bc250_drv_video
     ${BC250_EXTRA_LIBS}
 )
 
+# H.264 through libx264 - see src/encoder_x264.h for why. Optional: without
+# it H.264 is encoded by the compute encoder, as before.
+option(BC250_WITH_X264 "Encode H.264 through libx264" ON)
+if(BC250_WITH_X264)
+    pkg_check_modules(X264 x264)
+    if(X264_FOUND)
+        target_sources(bc250_drv_video PRIVATE src/encoder_x264.c)
+        target_include_directories(bc250_drv_video PRIVATE ${X264_INCLUDE_DIRS})
+        target_link_libraries(bc250_drv_video ${X264_LINK_LIBRARIES})
+        target_compile_definitions(bc250_drv_video PRIVATE BC250_HAVE_X264)
+        message(STATUS "libx264 ${X264_VERSION} found: H.264 encodes through x264")
+    else()
+        message(WARNING "libx264 not found: H.264 falls back to the compute encoder")
+    endif()
+endif()
+
 # Installation paths
 if(NOT LIBVA_DRIVERS_PATH)
     if(BUILD_32BIT)

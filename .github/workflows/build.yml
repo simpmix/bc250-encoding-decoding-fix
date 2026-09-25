@@ -28,6 +28,7 @@ jobs:
           libva-dev \
           libdrm-dev \
           libvulkan-dev \
+          libx264-dev \
           mesa-vulkan-drivers \
           glslang-tools \
           vainfo \

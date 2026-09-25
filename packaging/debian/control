@@ -8,6 +8,7 @@ Build-Depends: debhelper-compat (= 13),
                libva-dev,
                libdrm-dev,
                libvulkan-dev,
+               libx264-dev,
                glslang-tools
 Standards-Version: 4.7.0
 Homepage: https://github.com/MTSistemi/bc250-vaapi
@@ -20,8 +21,8 @@ Suggests: ffmpeg, vainfo
 Description: VA-API video encoding and decoding for the AMD BC-250
  The AMD BC-250 has no usable video engine, so recording, streaming and
  playback all fall back to the processor. This is a VA-API driver that does
- the work itself: it encodes H.264 and HEVC with Vulkan compute shaders on the
- board's 40 compute units, and decodes H.264 and H.265 on the processor. Any
+ the work itself: it encodes H.264 through libx264 and HEVC with its own
+ encoder, and decodes H.264 and H.265 on the processor. Any
  application that speaks VA-API finds it, where otherwise it would find
  nothing at all - no other VA-API driver initialises on this hardware.
  .

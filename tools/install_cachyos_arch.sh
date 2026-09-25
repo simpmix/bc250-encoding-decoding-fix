@@ -26,7 +26,7 @@ if [ ! -f "$ARCH_DIR/PKGBUILD" ]; then
 fi
 
 echo -e "  -> Installing required build dependencies via pacman..."
-sudo pacman -S --needed --noconfirm base-devel git cmake meson ninja libva vulkan-headers glslang
+sudo pacman -S --needed --noconfirm base-devel git cmake meson ninja libva vulkan-headers glslang x264
 
 echo -e "  -> Building and installing bc250-vaapi package..."
 cd "$ARCH_DIR"

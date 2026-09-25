@@ -28,6 +28,9 @@
 #include "cpu_simd_me.h"
 #include "dynamic_governor.h"
 #include "encoder_h264.h"
+#ifdef BC250_HAVE_X264
+#include "encoder_x264.h"
+#endif
 
 /* Decoded Picture Buffer entry */
 typedef struct dpb_entry {
@@ -208,6 +211,16 @@ struct h264_encoder {
     cpu_simd_me_config_t me_cfg;
     gpu_mv_t *cpu_mvs;
     size_t cpu_mvs_cap;
+
+#ifdef BC250_HAVE_X264
+    /* Non-NULL when H.264 goes through libx264 - see encoder_x264.h. The
+     * compute pipeline above stays allocated either way: encode_raw() and
+     * BC250_H264_BACKEND=compute still use it. */
+    h264_x264_t *x264;
+    uint8_t *x264_y, *x264_uv;      /* the surface, read back as NV12 */
+    size_t x264_cap;
+#endif
+    int icq_quality;               /* > 0: VA ICQ at this quality factor */
 };
 
 static void manage_dpb(h264_encoder_t *encoder, int new_frame_num, int new_poc)
@@ -1801,6 +1814,18 @@ h264_encoder_t *h264_encoder_create(bc250_gpu_context_t *gpu_ctx,
     encoder->cpu_mvs = calloc(encoder->total_mbs, sizeof(gpu_mv_t));
     encoder->cpu_mvs_cap = encoder->total_mbs;
 
+#ifdef BC250_HAVE_X264
+    {
+        const char *be = getenv("BC250_H264_BACKEND");
+        if (!be || strcmp(be, "compute") != 0)
+            encoder->x264 = h264_x264_create();
+    }
+    if (encoder->x264) {
+        fprintf(stderr, "[bc250-h264] Encoder initialized: %ux%u, profile %d, backend=x264\n",
+                width, height, prof_idc);
+        return encoder;
+    }
+#endif
     fprintf(stderr, "[bc250-h264] Encoder initialized: %ux%u @ %u fps, %u bps, profile %d, entropy=%s, hybrid_governor=enabled\n",
             width, height, encoder->fps, bitrate, prof_idc, use_cabac ? "CABAC" : "CAVLC");
 
@@ -1984,6 +2009,19 @@ uint32_t h264_encoder_get_max_frame_size(const h264_encoder_t *encoder) {
     return encoder ? encoder->max_frame_bits : 0;
 }
 
+void h264_encoder_set_icq_quality(h264_encoder_t *encoder, int quality) {
+    if (encoder) encoder->icq_quality = quality > 0 && quality <= 51 ? quality : 0;
+}
+
+bool h264_encoder_uses_x264(const h264_encoder_t *encoder) {
+#ifdef BC250_HAVE_X264
+    return encoder && encoder->x264;
+#else
+    (void)encoder;
+    return false;
+#endif
+}
+
 /* Choose frame type and QP and put this frame's GPU work in flight without
  * waiting for it. See h264_encoder_submit_frame()'s header doc for why the
  * split exists and what it costs (rate control runs one frame ahead). */
@@ -2103,6 +2141,84 @@ int h264_encoder_submit_frame(h264_encoder_t *encoder,
     return h264_encoder_submit_frame_ext(encoder, gpu_ctx, input_surface, dummy_mem, pending);
 }
 
+#ifdef BC250_HAVE_X264
+static bool is_live_caller(void)
+{
+#if defined(__linux__)
+    return program_invocation_short_name &&
+           (strcmp(program_invocation_short_name, "sunshine") == 0 ||
+            strcmp(program_invocation_short_name, "wivrn-server") == 0 ||
+            strcmp(program_invocation_short_name, "wivrn") == 0);
+#else
+    return false;
+#endif
+}
+
+/* The picture through x264: read the surface back, hand it over with the
+ * settings as they stand now. */
+static int encode_frame_x264(h264_encoder_t *encoder, bc250_gpu_context_t *gpu_ctx,
+                             gpu_image_t input_surface, gpu_memory_t input_memory,
+                             uint8_t *output_buf, size_t output_size)
+{
+    if (!gpu_ctx || input_surface.y_plane == VK_NULL_HANDLE) return -1;
+    /* An NV12 encoder has nothing to say about a P010 surface. */
+    if (input_surface.format == GPU_IMAGE_P010) return -1;
+
+    /* The picture is the cropped one the caller described, and never more
+     * than the surface holds: ffmpeg opens H.264 contexts at 1920x1088 and
+     * hands them 1920x1080 surfaces. */
+    uint32_t w = encoder->width_in_mbs * 16, h = encoder->height_in_mbs * 16;
+    if (encoder->sps.frame_cropping) {
+        w -= 2 * (encoder->sps.crop_left + encoder->sps.crop_right);
+        h -= 2 * (encoder->sps.crop_top + encoder->sps.crop_bottom);
+    } else {
+        w = encoder->width;
+        h = encoder->height;
+    }
+    if (input_surface.width && input_surface.width < w) w = input_surface.width;
+    if (input_surface.height && input_surface.height < h) h = input_surface.height;
+    w &= ~1u;
+    h &= ~1u;
+    if (w == 0 || h == 0) return -1;
+
+    const size_t need = (size_t)w * h;
+    if (need > encoder->x264_cap) {
+        uint8_t *ny = realloc(encoder->x264_y, need);
+        if (ny) encoder->x264_y = ny;
+        uint8_t *nuv = realloc(encoder->x264_uv, need / 2);
+        if (nuv) encoder->x264_uv = nuv;
+        if (!ny || !nuv) return -1;
+        encoder->x264_cap = need;
+    }
+    if (gpu_compute_download_nv12(gpu_ctx, &input_surface, input_memory,
+                                  encoder->x264_y, (int)w, encoder->x264_uv, (int)w,
+                                  (int)w, (int)h) != 0)
+        return -1;
+
+    h264_x264_config_t cfg = {
+        .width = w, .height = h,
+        .fps = encoder->fps,
+        .gop = encoder->gop_size,
+        .rc_mode = encoder->rc.mode,
+        .bitrate = encoder->rc.target_bitrate,
+        .qp = encoder->rc.current_qp,
+        .crf = encoder->icq_quality,
+        .quality_level = encoder->quality_level,
+        .profile_idc = encoder->sps.profile_idc,
+        .cbr_intent = encoder->cbr_intent,
+        .live = is_live_caller(),
+    };
+    const bool idr = encoder->force_idr;
+    encoder->force_idr = false;
+    int n = h264_x264_encode(encoder->x264, &cfg,
+                             encoder->x264_y, (int)w, encoder->x264_uv, (int)w,
+                             idr, cfg.rc_mode == RC_CQP ? encoder->rc.current_qp : 0,
+                             output_buf, output_size);
+    if (n > 0) encoder->frame_count++;
+    return n;
+}
+#endif
+
 int h264_encoder_encode_frame_ext(h264_encoder_t *encoder,
                                   bc250_gpu_context_t *gpu_ctx,
                                   gpu_image_t input_surface,
@@ -2110,6 +2226,11 @@ int h264_encoder_encode_frame_ext(h264_encoder_t *encoder,
                                   uint8_t *output_buf, size_t output_size)
 {
     if (!encoder || !output_buf) return -1;
+#ifdef BC250_HAVE_X264
+    if (encoder->x264)
+        return encode_frame_x264(encoder, gpu_ctx, input_surface, input_memory,
+                                 output_buf, output_size);
+#endif
 
     h264_pending_frame_t pending;
     if (h264_encoder_submit_frame_ext(encoder, gpu_ctx, input_surface, input_memory, &pending) != 0)
@@ -3476,6 +3597,13 @@ int h264_encoder_encode_raw(h264_encoder_t *encoder,
 
 void h264_encoder_destroy(h264_encoder_t *encoder)
 {
+#ifdef BC250_HAVE_X264
+    if (encoder) {
+        h264_x264_destroy(encoder->x264);
+        free(encoder->x264_y);
+        free(encoder->x264_uv);
+    }
+#endif
     if (!encoder) return;
     if (encoder->output_buf) free(encoder->output_buf);
     if (encoder->prev_y_frame) free(encoder->prev_y_frame);

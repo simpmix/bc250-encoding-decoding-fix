@@ -257,6 +257,14 @@ int h264_encoder_encode_raw(h264_encoder_t *encoder,
 /**
  * h264_encoder_destroy - Teardown and free resources
  */
+/* VA's ICQ: constant quality at this factor (1..51), 0 to go back to the
+ * bitrate. Only the x264 backend can honour it; the compute encoder keeps
+ * treating ICQ as the bitrate va_backend.c derives for it. */
+void h264_encoder_set_icq_quality(h264_encoder_t *encoder, int quality);
+
+/* Whether H.264 goes through libx264 - see encoder_x264.h. */
+bool h264_encoder_uses_x264(const h264_encoder_t *encoder);
+
 void h264_encoder_destroy(h264_encoder_t *encoder);
 
 /**
