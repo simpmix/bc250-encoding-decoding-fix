@@ -1,0 +1,41 @@
+#version 450
+/* bc250-vulkan-encode-stopgap - https://github.com/Shalasere/bc250-vulkan-encode-stopgap */
+/*
+ * Copyright (c) 2026 BC-250 Project
+ * SPDX-License-Identifier: GPL-3.0-only
+ *
+ * gpu_contention.comp - tools/gpu_contention.c's own ALU-bound busy work.
+ *
+ * Every invocation runs a dependent multiply-add chain of length
+ * pc.iterations, then every invocation (not just one) atomically folds its
+ * result into a single SSBO counter. Both properties are deliberate:
+ *
+ *  - The chain is serially DEPENDENT (each step needs the previous result),
+ *    so the compiler cannot hoist it out of the loop, common-subexpression
+ *    it away, or unroll it into something the ALUs finish for free - the
+ *    wall-clock cost genuinely scales with pc.iterations, which is what
+ *    lets the host calibrate a target duty cycle against it at all.
+ *  - EVERY invocation writes (via atomicAdd, not just invocation 0), so the
+ *    whole dispatch's work is provably live - the shader compiler cannot
+ *    prove any single invocation's result is unobserved and DCE it.
+ */
+layout(local_size_x = 256) in;
+
+layout(push_constant) uniform PC {
+    uint iterations;
+} pc;
+
+layout(std430, binding = 0) buffer Sink {
+    uint val;
+} sink;
+
+void main() {
+    uint x = gl_GlobalInvocationID.x + 1u;
+    for (uint i = 0u; i < pc.iterations; i++) {
+        /* Knuth's multiplicative hash constant - arbitrary odd multiplier,
+         * not chosen for any property beyond "cheap and not a compile-time
+         * fixed point that could let the compiler shortcut the loop". */
+        x = x * 2654435761u + 1u;
+    }
+    atomicAdd(sink.val, x);
+}

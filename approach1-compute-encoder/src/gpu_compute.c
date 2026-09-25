@@ -696,7 +696,6 @@ int bc250_gpu_init(bc250_gpu_context_t *ctx) {
         vkGetPhysicalDeviceProperties(devices[i], &ctx->dev_props);
         if (ctx->dev_props.deviceID == BC250_DEVICE_ID) {
             ctx->physical_device = devices[i];
-            ctx->is_rdna2 = true;
             fprintf(stderr, "[bc250-gpu] Found AMD BC-250 APU (0x13FE) - %s\n", ctx->dev_props.deviceName);
             break;
         }
@@ -708,7 +707,6 @@ int bc250_gpu_init(bc250_gpu_context_t *ctx) {
             vkGetPhysicalDeviceProperties(devices[i], &ctx->dev_props);
             if (ctx->dev_props.vendorID == AMD_VENDOR_ID) {
                 ctx->physical_device = devices[i];
-                ctx->is_rdna2 = true;
                 fprintf(stderr, "[bc250-gpu] BC-250 not found, using AMD GPU: %s\n", ctx->dev_props.deviceName);
                 break;
             }

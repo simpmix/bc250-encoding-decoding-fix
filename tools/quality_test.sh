@@ -106,6 +106,15 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/approach1-compute-encoder/build}"
 BC250_ENV_SCRIPT="${BC250_ENV_SCRIPT:-$HOME/build-deps/env.sh}"
 WORK_DIR="${WORK_DIR:-/tmp/bc250_quality_test}"
+
+# Probe for modern -fps_mode passthrough (FFmpeg 5.1+) vs legacy -vsync 0 (FFmpeg 4.x)
+if ffmpeg -hide_banner -loglevel quiet -f lavfi -i "color=s=2x2:d=0.04" \
+        -fps_mode passthrough -f null - </dev/null >/dev/null 2>&1; then
+    FFMPEG_FPSMODE=(-fps_mode passthrough)
+else
+    FFMPEG_FPSMODE=(-vsync 0)
+fi
+
 WIDTH="${WIDTH:-640}"
 HEIGHT="${HEIGHT:-480}"
 FRAMERATE="${FRAMERATE:-25}"
@@ -262,7 +271,7 @@ fi
 # ------------------------------------------------------------------
 echo -e "\n${BOLD}[5/6] Decoding with ffmpeg's software H.264 decoder (oracle)...${NC}"
 DECODED="$WORK_DIR/decoded.yuv"
-ffmpeg -y -v error -vsync 0 -i "$ENCODED" -f rawvideo -pix_fmt nv12 "$DECODED"
+ffmpeg -y -v error "${FFMPEG_FPSMODE[@]}" -i "$ENCODED" -f rawvideo -pix_fmt nv12 "$DECODED"
 DECODED_BYTES=$(wc -c < "$DECODED")
 DECODED_FRAMES=$(( DECODED_BYTES / FRAME_SIZE ))
 echo -e "  ${GREEN}✓ Decoded $DECODED_FRAMES frame(s) ($DECODED_BYTES bytes)${NC}"

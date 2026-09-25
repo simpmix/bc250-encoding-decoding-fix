@@ -64,6 +64,14 @@ jobs:
         echo "Validating generated H.264 stream with FFmpeg reference decoder..."
         BUILD_DIR=approach1-compute-encoder/build
         
+        # Probe for modern -fps_mode passthrough (FFmpeg 5.1+) vs legacy -vsync 0 (FFmpeg 4.x)
+        if ffmpeg -hide_banner -loglevel quiet -f lavfi -i "color=s=2x2:d=0.04" \
+                -fps_mode passthrough -f null - </dev/null >/dev/null 2>&1; then
+          FFMPEG_FPSMODE=(-fps_mode passthrough)
+        else
+          FFMPEG_FPSMODE=(-vsync 0)
+        fi
+
         # If ctest already generated the stream, find it; otherwise run test_encode directly
         STREAM_PATH=$(find "$BUILD_DIR" -name "bc250_test_stream.h264" 2>/dev/null | head -n 1)
         
@@ -91,7 +99,7 @@ jobs:
 
         # Content Assertion: Decode stream to raw YUV and verify exact frame count & byte size
         echo "Running Content Assertion: decoding stream to raw YUV420p..."
-        ffmpeg -v error -y -vsync 0 -i "$STREAM_PATH" -f rawvideo -pix_fmt yuv420p decoded.yuv
+        ffmpeg -v error -y "${FFMPEG_FPSMODE[@]}" -i "$STREAM_PATH" -f rawvideo -pix_fmt yuv420p decoded.yuv
         DECODED_SIZE=$(wc -c < decoded.yuv)
         EXPECTED_SIZE=$((1920 * 1080 * 3 / 2 * 30))
         FRAME_SIZE=$((1920 * 1080 * 3 / 2))
@@ -122,7 +130,7 @@ jobs:
           echo "✓ SUCCESS: FFmpeg verified and decoded all H.265/HEVC frames with ZERO errors!"
 
           echo "Running HEVC Content Assertion: decoding stream to raw YUV420p..."
-          ffmpeg -v error -y -vsync 0 -i "$HEVC_STREAM_PATH" -f rawvideo -pix_fmt yuv420p decoded_hevc.yuv
+          ffmpeg -v error -y "${FFMPEG_FPSMODE[@]}" -i "$HEVC_STREAM_PATH" -f rawvideo -pix_fmt yuv420p decoded_hevc.yuv
           HEVC_DECODED_SIZE=$(wc -c < decoded_hevc.yuv)
           HEVC_FRAME_SIZE=$((128 * 96 * 3 / 2))
           HEVC_FRAME_COUNT=$((HEVC_DECODED_SIZE / HEVC_FRAME_SIZE))

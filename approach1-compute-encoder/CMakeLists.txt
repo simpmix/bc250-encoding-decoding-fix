@@ -361,6 +361,38 @@ if(BUILD_RC_BENCH)
     endif()
 endif()
 
+# ----------------------------------------------------------------------------
+# gpu_contention - tunable Vulkan compute load generator (tools/gpu_contention.c)
+# ----------------------------------------------------------------------------
+option(BUILD_GPU_CONTENTION "Build the tunable GPU contention-load generator (tools/gpu_contention.c)" OFF)
+if(BUILD_GPU_CONTENTION)
+    set(GPU_CONTENTION_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../tools/gpu_contention.c)
+    set(GPU_CONTENTION_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/../tools/shaders/gpu_contention.comp)
+    if(EXISTS ${GPU_CONTENTION_SRC} AND EXISTS ${GPU_CONTENTION_SHADER})
+        set(GPU_CONTENTION_SPV ${CMAKE_CURRENT_BINARY_DIR}/gpu_contention.comp.spv)
+        if(GLSLANG_VALIDATOR)
+            add_custom_command(
+                OUTPUT ${GPU_CONTENTION_SPV}
+                COMMAND ${GLSLANG_VALIDATOR} -V ${GPU_CONTENTION_SHADER} -o ${GPU_CONTENTION_SPV}
+                DEPENDS ${GPU_CONTENTION_SHADER}
+                COMMENT "Compiling gpu_contention.comp with glslangValidator")
+        elseif(GLSLC)
+            add_custom_command(
+                OUTPUT ${GPU_CONTENTION_SPV}
+                COMMAND ${GLSLC} -c ${GPU_CONTENTION_SHADER} -o ${GPU_CONTENTION_SPV}
+                DEPENDS ${GPU_CONTENTION_SHADER}
+                COMMENT "Compiling gpu_contention.comp with glslc")
+        endif()
+        add_custom_target(gpu_contention_shader DEPENDS ${GPU_CONTENTION_SPV})
+
+        add_executable(gpu_contention ${GPU_CONTENTION_SRC})
+        target_link_libraries(gpu_contention PRIVATE ${Vulkan_LIBRARIES})
+        add_dependencies(gpu_contention gpu_contention_shader)
+        add_custom_command(TARGET gpu_contention POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy ${GPU_CONTENTION_SPV} $<TARGET_FILE_DIR:gpu_contention>/gpu_contention.comp.spv)
+    endif()
+endif()
+
 # Tests
 #
 # enable_testing() MUST be called here, in the top-level CMakeLists.txt,

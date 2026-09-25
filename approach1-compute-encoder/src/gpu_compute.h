@@ -254,7 +254,6 @@ typedef struct bc250_gpu_context {
     /* Device properties */
     VkPhysicalDeviceProperties dev_props;
     uint32_t max_workgroup_size;
-    bool is_rdna2;
 
     /* Opt-in GPU per-stage timing (BC250_PERF_STATS=1) - see gpu_compute.c's
      * BC250_PERF_NUM_TIMESTAMPS comment and gpu_compute_dispatch_encode()/
