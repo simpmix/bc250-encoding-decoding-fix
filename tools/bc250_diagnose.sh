@@ -92,6 +92,19 @@ if [ $FOUND_DRIVER -eq 0 ]; then
     echo -e "    Run ./build_and_install.sh, ./tools/setup_bazzite.sh, or ./tools/setup_steamos.sh first!"
 fi
 
+FOUND_32BIT_DRIVER=0
+for dri32 in "/usr/lib32/dri" "/usr/lib/i386-linux-gnu/dri"; do
+    if [ -f "$dri32/bc250_drv_video.so" ]; then
+        echo -e "  ${GREEN}✓ Found 32-bit companion driver (Steam Link): $dri32/bc250_drv_video.so${NC}"
+        FOUND_32BIT_DRIVER=1
+        break
+    fi
+done
+if [ $FOUND_32BIT_DRIVER -eq 0 ]; then
+    echo -e "  ${YELLOW}! 32-bit companion driver not found in /usr/lib32/dri (required for Steam Link).${NC}"
+    echo -e "    Run: ./tools/build_32bit.sh or install from release v0.5.1 bundle."
+fi
+
 FOUND_SHADERS=0
 for sdir in "/var/lib/bc250/shaders" "/usr/local/share/bc250/shaders" "/usr/share/bc250/shaders"; do
     if [ -d "$sdir" ]; then
@@ -244,6 +257,17 @@ else
         echo -e "  ${GREEN}✓ No elevated file capabilities detected on Sunshine's process${NC}"
         echo -e "    (CapEff=${CAPEFF:-unreadable}) - libva's environment-variable lookup"
         echo -e "    should apply normally; the check below is meaningful here."
+    fi
+
+    if pgrep -x gamescope > /dev/null 2>&1; then
+        echo -e "  ${BLUE}ℹ Active Gamescope / Gaming Mode session detected.${NC}"
+        if [ "$CAPEFF" = "0000000000000000" ] && [ "${SUNSHINE_UID:-0}" != "0" ]; then
+            echo -e "  ${YELLOW}! In Gaming Mode, Sunshine requires direct KMS capture permissions (cap_sys_admin)${NC}"
+            echo -e "    because Gamescope does not expose Wayland screencasting protocols to nested apps."
+            echo -e "    To enable Sunshine streaming in Gaming Mode, run:"
+            echo -e "      sudo setcap cap_sys_admin+ep \$(which sunshine)"
+            echo -e "      sudo ./tools/install_vaapi_boot_redirect.sh"
+        fi
     fi
     echo
 
