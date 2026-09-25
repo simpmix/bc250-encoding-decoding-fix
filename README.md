@@ -109,7 +109,7 @@ To configure Sunshine for zero-stutter 60/120 FPS game streaming with minimal GP
 ```bash
 ./tools/sunshine_preset/apply_sunshine_preset.sh
 ```
-*See [`docs/sunshine-guide.md`](docs/sunshine-guide.md) for full details.*
+*See [`docs/sunshine-guide.md`](docs/sunshine-guide.md) for full configuration, and [`docs/troubleshooting.md`](docs/troubleshooting.md) for Gamescope / Steam Link fixes.*
 
 ### WiVRn (Wireless VR Streaming)
 To configure WiVRn for ~36ms motion-to-photon latency and ~190 Mbps throughput:

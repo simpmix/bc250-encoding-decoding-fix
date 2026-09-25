@@ -310,3 +310,67 @@ When playing HEVC/H.265 files (such as *Big Buck Bunny* or MP4/MKV video streams
 * **Quantization Matrices**: Full scaling list support from `VAIQMatrixBufferHEVC` and Table 7-6 defaults.
 * **PCM Coding Units**: Supported and decoded bit-exact.
 * **16K Decode Resolution**: HEVC decoding supports up to 16384x16384 on a side.
+
+---
+
+## 15. Gaming Mode (Gamescope Session) Black or Green Screen (Sunshine & Steam Link)
+
+### Symptoms
+* Connecting via Steam Link or Moonlight while the BC-250 console is in **Gaming Mode** (Gamescope compositor on Bazzite, SteamOS, or CachyOS) results in working game audio but a **solid bright green screen** or **blank black screen**.
+* The exact same games stream with perfect video when running in Desktop Mode (KDE Plasma / GNOME).
+
+### Root Causes
+1. **Unimplemented DMA-BUF Import in VA-API**: In Gaming Mode, Gamescope passes composited video frames as external DMA-BUF handles (`DRM_PRIME_2`) directly into `vaCreateSurfaces2()`. In earlier driver versions, `bc250_CreateSurfaces2()` ignored `attrib_list` and silently returned `VA_STATUS_SUCCESS` with an empty Vulkan surface. Believing zero-copy import succeeded, the caller skipped its EGL/GL blit and encoded the blank buffer. In YUV (NV12), an all-zeros buffer decodes to $RGB(0, 135, 0)$—a solid bright green screen.
+2. **KMS File Capabilities & `AT_SECURE` Environment Stripping**: Sunshine inside Gamescope cannot use portal or Wayland capture and must use direct KMS capture (`capture = kms`). Granting `cap_sys_admin` puts Linux into secure-execution mode (`AT_SECURE`), which strips user environment variables like `LIBVA_DRIVER_NAME=bc250`, causing `libva` to fall back to the disabled `radeonsi` driver.
+3. **Incorrect Display Card Node (`card0` vs `card1`)**: On Cyan Skillfish boards, the active display connector (`DP-1`) is often driven by `/dev/dri/card1` rather than `/dev/dri/card0`. If Sunshine targets `card0`, KMS captures an unattached blank connector.
+
+### Resolution Steps
+1. **Update to Driver v0.5.1 or Newer**: Driver v0.5.1 updates `bc250_CreateSurfaces2()` to explicitly reject external DMA-BUF imports with `VA_STATUS_ERROR_UNSUPPORTED_MEMORY_TYPE`, forcing Sunshine onto its working EGL blit pathway (`vaExportSurfaceHandle`) and Steam Link onto its frame copy path.
+2. **Grant Sunshine KMS Permissions**:
+   ```bash
+   sudo setcap cap_sys_admin+ep $(which sunshine)
+   ```
+3. **Install the VA-API Boot Redirect**:
+   ```bash
+   sudo ./tools/install_vaapi_boot_redirect.sh
+   ```
+   This ensures `libva` maps `radeonsi_drv_video.so` directly to `bc250_drv_video.so`, bypassing `AT_SECURE` variable filtering.
+4. **Configure Active Adapter in Sunshine**:
+   Run `./tools/bc250_diagnose.sh` to check which card node has the active monitor. In Sunshine Web Configuration (**Configuration -> Audio/Video**), set **adapter_name** to your active node (typically `/dev/dri/card1`).
+5. **Install 32-bit Driver for Steam Link**:
+   Ensure `/usr/lib32/dri/bc250_drv_video.so` is present on the host:
+   ```bash
+   ./tools/build_32bit.sh
+   ```
+
+---
+
+## 16. Steam Link Won't Launch Select Games (Red Dead Redemption 2, GTA V, EA/Ubisoft Launchers)
+
+### Symptoms
+* Steam Link connects and streams the Steam library or Big Picture UI normally.
+* Launching games with secondary launchers (such as *Red Dead Redemption 2*, *Grand Theft Auto V*, *Cyberpunk 2077*, or EA App titles) causes Steam Link to immediately abort the stream, freeze on a loading screen, or report *"Cannot launch game while streaming"*, even though the game starts on the host.
+
+### Root Causes
+1. **Secondary Launcher Process Detachment**: Games like RDR 2 launch a bootstrap process (`PlayRDR2.exe`), which starts the Rockstar Games Launcher in Proton, which in turn spawns `RDR2.exe`. Steam Remote Play hooks the process Steam initially launched. When the launcher closes or minimizes to spawn the game executable, Steam assumes the application exited and terminates the streaming session.
+2. **GPU Compute Queue Contention on 32-bit Driver**: Red Dead Redemption 2 saturates 100% of the APU's 40 Compute Units and large amounts of unified GDDR6. When Steam Link ran the 32-bit compute encoder without `libx264`, motion estimation compute shaders contended with RDR 2's Vulkan/DX12 rendering, causing frame budget overruns and launcher timeouts.
+3. **Proton Exclusive Fullscreen Capture**: By default, RDR 2 may attempt exclusive fullscreen DirectX 12 via `vkd3d-proton`, which fails window capture hooks in Steam Remote Play.
+
+### Resolution Steps
+1. **Enable Desktop Capture in Steam**:
+   On the host machine (or in Steam Big Picture):
+   * Go to **Settings -> Remote Play -> Advanced Host Options**.
+   * Check **"Enable Desktop Capture"** (and uncheck "Direct capture only" if enabled).
+   * This allows Steam Link to stream the active display continuously, preventing stream termination when secondary launchers detach.
+2. **Install 32-bit Driver with `libx264` CPU Backend**:
+   Update to the v0.5.1 companion bundle or rebuild using:
+   ```bash
+   ./tools/build_32bit.sh
+   ```
+   The 32-bit driver now incorporates native `libx264` support (`BC250_H264_BACKEND=x264`), encoding frames on the Zen 2 CPU cores and leaving the 40 CUs 100% free for RDR 2.
+3. **Set Proton Launch Options for RDR 2**:
+   In Steam, right-click **Red Dead Redemption 2 -> Properties -> General -> Launch Options**, and enter:
+   ```text
+   -vulkan -windowed -noborder
+   ```
+   This ensures RDR 2 runs via native Vulkan in a borderless window, ensuring seamless capture by Steam Remote Play.
