@@ -4113,3 +4113,22 @@ In §30, integer-pel diamond motion search and spatial merge mode were introduce
 - **PR #46 ('fix/governor-live')**: Dynamically pins the encoding governor specifically to live streams, eliminating duplicated frames during offline FFmpeg file transcodes.
 - **PR #47 ('feat/h264-x264')**: Integrated 'libx264' backend ('BC250_H264_BACKEND=x264') for H.264 encoding in 'bc250_drv_video.so', delivering 4x faster execution, CABAC optimization, and multi-reference frames while leaving the APU's 40 CUs free for game rendering.
 - **PR #48 ('feat/hevc-enc-inter')**: Full inter-prediction, AMVP/Merge candidate evaluation, 8x8 DCT transforms, dead-zone quantization (-21.8% bit savings), and complexity-based rate control model for H.265/HEVC encoding.
+
+## 34. Release v0.5.2: Semi-Custom Architecture Precision, Gamescope Diagnostics & Contention Tooling
+
+### 34.1 Hardware Architecture & Precision Audit (Cyan Skillfish / Oberon gfx1013)
+- **Problem**: Historical commits and documentation referred to the BC-250 APU GPU as desktop "RDNA 2". In reality, the BC-250 uses the semi-custom Oberon / Cyan Skillfish APU (PS5 salvage silicon, `gfx1013`), an RDNA 1.5 hybrid architecture: it features RDNA 2 CU layout, high clock targets, and Ray Tracing BVH units, but retains an RDNA 1-style memory subsystem (no Infinity Cache / System Level Cache) and lacks VRS Tier 2.
+- **Changes**:
+  - Updated driver vendor string in `va_backend.c` to `AMD BC-250 Compute VA-API Driver`.
+  - Clarified ACE async compute queue comment in `gpu_compute.c` (ACE is standard across AMD architectures since GCN 1.0).
+  - Clarified Wave32 and Wave64/Dual-Wave32 native SIMD32 workgroup execution comments in `dct_transform.comp` and `motion_estimation.comp`.
+  - Updated documentation across `README.md`, `docs/hardware-notes.md`, `docs/sunshine-guide.md`, and `docs/vcn-registers.md` to accurately define the hardware as 40 Compute Units on semi-custom RDNA 1.5 architecture.
+
+### 34.2 Gamescope KMS & Multiarch Companion Diagnostics (Issue #55)
+- Added automatic detection in `tools/bc250_diagnose.sh` for Gamescope session execution and KMS render node access permissions.
+- Added explicit checking and remediation instructions when the 32-bit companion driver (`/usr/lib32/dri/bc250_drv_video.so`) is missing, ensuring Steam Link client functionality is verified.
+
+### 34.3 Upstream Cherry-Picks & Contention Testing
+- Adopted dynamic FFmpeg `-fps_mode` vs `-vsync 0` probing across CI workflows and `tools/quality_test.sh`.
+- Removed dead `is_rdna2` field from `gpu_compute.h` and `gpu_compute.c`.
+- Integrated tunable GPU contention benchmark (`tools/gpu_contention.c`, `tools/shaders/gpu_contention.comp`) to evaluate concurrent encode performance under heavy 3D graphical loads.
