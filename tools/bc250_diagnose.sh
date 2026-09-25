@@ -102,7 +102,7 @@ for dri32 in "/usr/lib32/dri" "/usr/lib/i386-linux-gnu/dri"; do
 done
 if [ $FOUND_32BIT_DRIVER -eq 0 ]; then
     echo -e "  ${YELLOW}! 32-bit companion driver not found in /usr/lib32/dri (required for Steam Link).${NC}"
-    echo -e "    Run: ./tools/build_32bit.sh or install from release v0.5.2 bundle."
+    echo -e "    Run: ./tools/build_32bit.sh or install from release v0.5.1 bundle."
 fi
 
 FOUND_SHADERS=0

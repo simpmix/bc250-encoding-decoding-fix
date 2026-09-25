@@ -4114,7 +4114,7 @@ In §30, integer-pel diamond motion search and spatial merge mode were introduce
 - **PR #47 ('feat/h264-x264')**: Integrated 'libx264' backend ('BC250_H264_BACKEND=x264') for H.264 encoding in 'bc250_drv_video.so', delivering 4x faster execution, CABAC optimization, and multi-reference frames while leaving the APU's 40 CUs free for game rendering.
 - **PR #48 ('feat/hevc-enc-inter')**: Full inter-prediction, AMVP/Merge candidate evaluation, 8x8 DCT transforms, dead-zone quantization (-21.8% bit savings), and complexity-based rate control model for H.265/HEVC encoding.
 
-## 34. Release v0.5.2: Semi-Custom Architecture Precision, Gamescope Diagnostics & Contention Tooling
+## 34. Release v0.5.1 Update: Semi-Custom Architecture Precision, Gamescope Diagnostics & Contention Tooling
 
 ### 34.1 Hardware Architecture & Precision Audit (Cyan Skillfish / Oberon gfx1013)
 - **Problem**: Historical commits and documentation referred to the BC-250 APU GPU as desktop "RDNA 2". In reality, the BC-250 uses the semi-custom Oberon / Cyan Skillfish APU (PS5 salvage silicon, `gfx1013`), an RDNA 1.5 hybrid architecture: it features RDNA 2 CU layout, high clock targets, and Ray Tracing BVH units, but retains an RDNA 1-style memory subsystem (no Infinity Cache / System Level Cache) and lacks VRS Tier 2.
