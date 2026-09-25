@@ -1,7 +1,7 @@
 # BC-250 Hardware Notes
 
 ## APU Specifications
-- **Architecture**: Zen 2 CPU (8 cores / 16 threads) + RDNA 2 GPU (gfx1013)
+- **Architecture**: Zen 2 CPU (8 cores / 16 threads) + semi-custom RDNA 1.5 GPU (Cyan Skillfish / Oberon, `gfx1013`). Combines RDNA 2 compute unit layout, high clock targets, and Ray Tracing BVH units with an RDNA 1-style memory subsystem (no Infinity Cache / System Level Cache) and packed dual-rate FP16.
 - **Compute Units**: 40 CUs (20 WGPs, physically present on the PS5-derived die).
   - *Stock Mining Board State*: Often ships software-limited to 24 CUs (12 WGPs).
   - *40 CU Unlock*: Re-enabled via the community `amdgpu` kernel patch ([duggasco/bc250-40cu-unlock](https://github.com/duggasco/bc250-40cu-unlock)) or distributions like Bazzite/SkillFishOS.
@@ -20,7 +20,7 @@ Exhaustive reverse-engineering across the community and firmware audit of the AM
 - **Hazardous Register Warning (`0x1f81c`)**: Directly reading SMN register `0x1f81c` from host space triggers a hardware fabric hang that wedges the APU and requires an AC power cycle.
 - **Cryptographic Sealing**: Only the PSP itself (via `svc #0x7c`) can bypass the fabric ACL, but all 7 investigated exploit vectors (including APCB parsing in ABL4) are definitively closed on Cyan Skillfish. Modifying the `$KDB` key database in SPI flash permanently bricks the motherboard.
 - **Upstream AMD Confirmation**: AMD Linux kernel maintainer Alex Deucher confirmed that VCN was never part of the BC-250 product definition. The SMU PMFW contains zero VCN power/clock handlers, the VBIOS contains zero VCN tables, and no signed `vcn_2_0_3.bin` firmware exists for this SKU.
-- **Conclusion**: Physical VCN cannot be revived by any BIOS mod or kernel patch. This driver (`bc250-encoding-decoding-fix`) is the sole viable solution, executing encode operations as custom Vulkan Compute shaders across the 40 RDNA 2 Compute Units.
+- **Conclusion**: Physical VCN cannot be revived by any BIOS mod or kernel patch. This driver (`bc250-encoding-decoding-fix`) is the sole viable solution, executing encode operations as custom Vulkan Compute shaders across the 40 Compute Units.
 
 ### 2. DisplayPort / HDMI Audio Clock Divisor
 - The display controller (`dc`) calculates an incorrect audio sample clock divisor for 44.1/48 kHz audio. The included `bc250_audio_fix` DKMS module writes the proper clock ratios directly to APU DCCG registers (`0x05E0`, `0x05E4`, `0x05E8`).

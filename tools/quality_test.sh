@@ -30,7 +30,7 @@
 #      doesn't instrument), the script falls back to an ffmpeg-generated
 #      raw reference built from the identical, deterministic lavfi source.
 #   2. Encode those frames through the real, full pipeline (ffmpeg + real
-#      libva driver + Vulkan compute shaders on the BC-250's RDNA2 CUs).
+#      libva driver + Vulkan compute shaders on the BC-250's Compute Units).
 #   3. Decode the result independently with ffmpeg's software H.264
 #      decoder as an oracle (no VA-API involved on the decode side).
 #   4. Compare decoded pixels against the ground-truth reference with

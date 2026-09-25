@@ -29,6 +29,6 @@ Exhaustive static and dynamic analysis of the BC-250 PSP bootloader (`PSP_BL`, 3
 ### 4. Conclusion: The Vulkan Compute Solution
 Because physical VCN is permanently unprovisioned at the silicon, fabric, firmware, and kernel layers, physical VCN cannot be unlocked by software or BIOS modifications.
 
-This repository provides the only functional solution: **Approach 1 (The Vulkan Compute VA-API Driver)**. By executing custom Vulkan compute shaders directly across the APU's **40 unlocked RDNA 2 Compute Units (2,560 stream processors)**, we achieve hardware-equivalent video encoding with sub-10ms frame latency and <4.5% GPU overhead.
+This repository provides the only functional solution: **Approach 1 (The Vulkan Compute VA-API Driver)**. By executing custom Vulkan compute shaders directly across the APU's **40 unlocked Compute Units (2,560 stream processors)**, we achieve hardware-equivalent video encoding with sub-10ms frame latency and <4.5% GPU overhead.
 
 <!-- bc250-encoding-decoding-fix v0.4.3 -->

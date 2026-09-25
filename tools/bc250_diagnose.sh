@@ -34,7 +34,7 @@ if [ -d "/sys/class/drm" ]; then
     for card in /sys/class/drm/card[0-9]/device; do
         if [ -f "$card/current_compute_units" ]; then
             cus=$(cat "$card/current_compute_units")
-            echo -e "  ${GREEN}✓ Active RDNA 2 Compute Units: ${cus} CUs${NC}"
+            echo -e "  ${GREEN}✓ Active Compute Units: ${cus} CUs (Cyan Skillfish/Oberon)${NC}"
         fi
     done
 fi

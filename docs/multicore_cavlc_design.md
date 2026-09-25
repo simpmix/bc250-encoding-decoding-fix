@@ -169,7 +169,7 @@ implementer needs **zero build-system changes** to add `pthread_create`/
 ### How many threads (N) relative to 16 real cores?
 
 Board-confirmed: `nproc --all` = 16 logical cores (Zen 2, this is the BC-250's
-CPU side, separate from its RDNA2 GPU). `BC250_SLICES_PER_FRAME` already
+CPU side, separate from its Oberon / Cyan Skillfish GPU). `BC250_SLICES_PER_FRAME` already
 validates to the range `[1, 16]` — so the existing env var ceiling happens to
 line up with the real core count, but that's the *parallelism* ceiling, not the
 *quality-sensible* ceiling — see the measured curve below. More slices always

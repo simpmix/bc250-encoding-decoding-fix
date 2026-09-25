@@ -2243,7 +2243,7 @@ VAStatus bc250_Initialize(VADriverContextP ctx, int *major_version, int *minor_v
     data->max_width = BC250_MAX_DECODE_SIDE;
     data->max_height = BC250_MAX_DECODE_SIDE;
     ctx->pDriverData = data;
-    ctx->str_vendor = "AMD BC-250 RDNA2 Compute VA-API Driver";
+    ctx->str_vendor = "AMD BC-250 Compute VA-API Driver";
 
 #ifdef _OPENMP
     /* OpenMP Thread Pool & Wait Policy Management:

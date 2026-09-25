@@ -32,6 +32,6 @@ For the best visual quality and lowest latency on your handheld or client device
 ---
 
 ## Why These Settings?
-* **VA-API Backend:** Directly leverages the APU's 40 unlocked RDNA 2 CUs.
+* **VA-API Backend:** Directly leverages the APU's 40 unlocked Compute Units (Cyan Skillfish / Oberon architecture).
 * **FEC 20%:** Forward Error Correction ensures dropped Wi-Fi packets do not cause video stuttering or freezes.
 * **Low-Latency CBR:** Dynamic rate control maintains consistent bandwidth utilization without packet bursts.

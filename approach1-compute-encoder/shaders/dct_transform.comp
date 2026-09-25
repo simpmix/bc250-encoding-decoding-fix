@@ -1,6 +1,6 @@
 /* bc250-encoding-decoding-fix v0.4.0 - https://github.com/simpmix/bc250-encoding-decoding-fix */
 #version 450
-layout(local_size_x = 32) in; // Wave32 aligned for RDNA 2
+layout(local_size_x = 32) in; // Wave32 aligned - native SIMD32 width for RDNA/Oberon architectures
 
 layout(std430, set = 0, binding = 0) readonly buffer InputResiduals {
     int res[];

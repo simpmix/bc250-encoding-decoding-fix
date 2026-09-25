@@ -64,7 +64,7 @@
 #version 450
 #extension GL_KHR_shader_subgroup_basic : enable
 #extension GL_KHR_shader_subgroup_arithmetic : enable
-layout(local_size_x = 64) in; // Wave64 / Dual-Wave32 for RDNA 2
+layout(local_size_x = 64) in; // Wave64 / Dual-Wave32 - native-Wave32 SIMD32 execution model
 
 layout(set = 0, binding = 0, r8) uniform readonly image2D currentImage;
 layout(set = 0, binding = 1, r8) uniform readonly image2D referenceImage;
@@ -230,7 +230,7 @@ shared uint shared_best_qtr_cost;
 
 /*
  * Subgroup-accelerated SAD reduction across the 64-thread workgroup.
- * On AMD RDNA 2 (BC-250), subgroupAdd() reduces cross-lane registers directly
+ * On AMD RDNA architectures (BC-250 Oberon / Cyan Skillfish), subgroupAdd() reduces cross-lane registers directly
  * in hardware (VOP3P / DPP) with zero Local Data Share (LDS) latency:
  *   - Wave64 (gl_NumSubgroups == 1): single-instruction cross-lane reduction.
  *   - Wave32 (gl_NumSubgroups == 2): 2 barriers across wave leaders.

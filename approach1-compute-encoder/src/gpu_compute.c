@@ -750,7 +750,8 @@ int bc250_gpu_init(bc250_gpu_context_t *ctx) {
     VkQueueFamilyProperties *qf_props = malloc(qf_count * sizeof(VkQueueFamilyProperties));
     vkGetPhysicalDeviceQueueFamilyProperties(ctx->physical_device, &qf_count, qf_props);
 
-    /* 1. Prioritize dedicated hardware async compute queue (ACE on RDNA2) */
+    /* 1. Prioritize dedicated hardware async compute queue (ACE - Asynchronous
+     * Compute Engine, present across GCN and RDNA architectures). */
     ctx->compute_queue_family = (uint32_t)-1;
     for (uint32_t i = 0; i < qf_count; i++) {
         if ((qf_props[i].queueFlags & VK_QUEUE_COMPUTE_BIT) &&

@@ -7,10 +7,10 @@
 
 A high-performance, spec-compliant VA-API driver (`bc250_drv_video.so`) engineered specifically for the **AMD BC-250 (Cyan Skillfish)** APU on Linux. 
 
-The BC-250 is a repurposed PS5 APU (Zen 2 8-core/16-thread CPU, up to 40 unlocked RDNA 2 Compute Units) whose physical VCN (Video Core Next) hardware engine was permanently unprovisioned and eFused off at the factory. Without a working VCN block, Linux applications fail to initialize hardware video acceleration. 
+The BC-250 is a repurposed PS5 APU (Zen 2 8-core/16-thread CPU, up to 40 unlocked Compute Units; Oberon / Cyan Skillfish semi-custom RDNA 1.5 architecture) whose physical VCN (Video Core Next) hardware engine was permanently unprovisioned and eFused off at the factory. Without a working VCN block, Linux applications fail to initialize hardware video acceleration. 
 
 This project solves this by delivering:
-1. **GPU Compute Video Encoders**: Real-time H.264 and H.265/HEVC encoding executed across the APU's 40 RDNA 2 Compute Units using custom Vulkan compute shaders with asynchronous pipelining and AVX2 CPU SIMD offloading.
+1. **GPU Compute Video Encoders**: Real-time H.264 and H.265/HEVC encoding executed across the APU's 40 Compute Units using custom Vulkan compute shaders with asynchronous pipelining and AVX2 CPU SIMD offloading.
 2. **Bit-Exact VA-API Video Decoders (`VAEntrypointVLD`)**: Threaded H.264 and HEVC decoding running on the Zen 2 CPU, verified bit-exact against reference decoders across all 302 conformance tests.
 3. **Low-Latency Game & VR Streaming**: Pre-tuned presets and passive thread policies for Sunshine / Moonlight (1080p60/1440p) and WiVRn wireless VR streaming (~36ms motion-to-photon latency, ~190 Mbps throughput).
 4. **Hardware Audio Clock Fix**: DKMS kernel module repairing the missing DisplayPort/HDMI audio clock.

@@ -7,7 +7,7 @@ below is backed by a real, on-hardware measurement, not inference.
 
 **Hardware under test throughout**: a physical AMD BC-250 console
 (`user@10.0.0.104`), running Bazzite (Kinoite/Fedora 43, ostree-based,
-`bazzite-deck` variant), 40-CU-unlocked RDNA2 GPU, 16-thread Zen 2 CPU.
+`bazzite-deck` variant), 40-CU-unlocked semi-custom RDNA 1.5 GPU (Cyan Skillfish / Oberon), 16-thread Zen 2 CPU.
 This is a real, actively-used gaming console, not a disposable test rig —
 every change below was validated with that in mind.
 
@@ -32,7 +32,7 @@ merged into one.
 The encoder existed as a VA-API driver (`bc250_drv_video.so`) that emulates
 an H.264 hardware encoder by running the whole encode pipeline — motion
 estimation, intra/inter prediction, DCT, quantization, entropy coding,
-deblocking — as Vulkan compute shaders on the BC-250's RDNA2 CUs, since the
+deblocking — as Vulkan compute shaders on the BC-250's Compute Units, since the
 chip's real VCN hardware video block is not usable (believed stuck behind
 an unresolved power/firmware init problem, not permanently fused off — a
 separate, harder hardware-unlock effort tracked elsewhere).
@@ -713,7 +713,7 @@ several more real findings, in the order discovered:
 - **Confirmed working end-to-end, past every earlier blocker**: real,
   unmodified Sunshine, via the real `systemctl --user` service, with
   `encoder = vaapi`: KMS capture succeeds, this driver loads
-  (`vaapi vendor: AMD BC-250 RDNA2 Compute VA-API Driver` in Sunshine's own
+  (`vaapi vendor: AMD BC-250 Compute VA-API Driver` [originally reported with RDNA2 string] in Sunshine's own
   log), GBM succeeds (the real Mesa library was never touched this time),
   and Sunshine actually creates an encode session against this driver —
   rate control negotiates, packed-header capability is queried. The **one
@@ -4055,7 +4055,7 @@ Real-world hardware testing on AMD BC-250 (Sunshine host + Moonlight client stre
 ### 32.1 Problem Statement & Architectural Motivation
 In §30, integer-pel diamond motion search and spatial merge mode were introduced for H.265/HEVC. However, execution profiling indicated:
 1. **CPU Execution Bottleneck in Motion Search**:
-   - While H.264 leveraged the BC-250's 40 RDNA2 compute units via Vulkan compute shaders (`motion_estimation.comp`), HEVC's frame dispatch in `hevc_encoder_encode_frame()` hardcoded `is_intra = 1` to `gpu_compute_dispatch_encode()`. This prevented the GPU from executing motion search on P-frames, forcing the CPU host thread to evaluate all motion estimation iterations sequentially using scalar arithmetic.
+   - While H.264 leveraged the BC-250's 40 compute units via Vulkan compute shaders (`motion_estimation.comp`), HEVC's frame dispatch in `hevc_encoder_encode_frame()` hardcoded `is_intra = 1` to `gpu_compute_dispatch_encode()`. This prevented the GPU from executing motion search on P-frames, forcing the CPU host thread to evaluate all motion estimation iterations sequentially using scalar arithmetic.
 2. **Scalar SAD Calculation Cost**:
    - Both `compute_sad_8x8_luma()` and `compute_sad_4x4_chroma()` relied on scalar double loops. On a 1080p frame (8,160 CTUs / 32,640 CUs), motion search evaluates thousands of SAD comparisons, making scalar byte subtraction and absolute value computation the dominant CPU hotspot.
 3. **Redundant Arithmetic in 4x4 Intra Transforms**:
@@ -4066,7 +4066,7 @@ In §30, integer-pel diamond motion search and spatial merge mode were introduce
 #### A. Vulkan Compute Motion Estimation Integration (`encoder_h265.c`, `gpu_compute.h`)
 - Defined canonical `gpu_mv_t` struct in `gpu_compute.h` matching the std430 16-byte shader buffer layout (`int32_t mvx, mvy; uint32_t sad; uint32_t _pad;`).
 - Updated `hevc_encoder_encode_frame()`:
-  - Dispatches `gpu_compute_dispatch_encode(..., is_idr ? 1 : 0, 1)`, enabling `motion_estimation.comp` to evaluate 16x16 CTU motion vectors across all 40 RDNA2 CUs in parallel on P-frames.
+  - Dispatches `gpu_compute_dispatch_encode(..., is_idr ? 1 : 0, 1)`, enabling `motion_estimation.comp` to evaluate 16x16 CTU motion vectors across all 40 CUs in parallel on P-frames.
   - Reads back staging buffer motion vectors via `gpu_compute_get_mv_staging_data()` into a dedicated cacheable host memory shadow buffer (`encoder->gpu_mvs`) following fence synchronization.
 - Updated `encode_ctu()` and `encode_cu()`:
   - Retrieves the CTU's GPU motion vector hypothesis based on CTU grid coordinates.
@@ -4111,5 +4111,5 @@ In §30, integer-pel diamond motion search and spatial merge mode were introduce
 
 ### 33.3 Upstream PR Integrations (MTSistemi PRs #46, #47, #48)
 - **PR #46 ('fix/governor-live')**: Dynamically pins the encoding governor specifically to live streams, eliminating duplicated frames during offline FFmpeg file transcodes.
-- **PR #47 ('feat/h264-x264')**: Integrated 'libx264' backend ('BC250_H264_BACKEND=x264') for H.264 encoding in 'bc250_drv_video.so', delivering 4x faster execution, CABAC optimization, and multi-reference frames while leaving the APU's 40 RDNA2 CUs free for game rendering.
+- **PR #47 ('feat/h264-x264')**: Integrated 'libx264' backend ('BC250_H264_BACKEND=x264') for H.264 encoding in 'bc250_drv_video.so', delivering 4x faster execution, CABAC optimization, and multi-reference frames while leaving the APU's 40 CUs free for game rendering.
 - **PR #48 ('feat/hevc-enc-inter')**: Full inter-prediction, AMVP/Merge candidate evaluation, 8x8 DCT transforms, dead-zone quantization (-21.8% bit savings), and complexity-based rate control model for H.265/HEVC encoding.

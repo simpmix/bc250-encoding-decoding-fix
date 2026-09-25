@@ -2,7 +2,7 @@
 
 ## Overview
 
-The AMD BC-250 mining card features an 8-core AMD Zen 2 CPU, 40 RDNA 2 Compute Units (CUs), and 16 GB of high-speed unified GDDR6 memory. However, the fixed-function Video Core Next (VCN) ASIC is disabled/fused off on these salvage dies.
+The AMD BC-250 mining card features an 8-core AMD Zen 2 CPU, 40 Compute Units (CUs, Oberon / Cyan Skillfish semi-custom architecture), and 16 GB of high-speed unified GDDR6 memory. However, the fixed-function Video Core Next (VCN) ASIC is disabled/fused off on these salvage dies.
 
 The **bc250-encoding-decoding-fix** driver restores ultra-low-latency game streaming by combining Vulkan compute shaders with a **Dynamic 4-Tier Hybrid Load Governor** and **AVX2 SIMD CPU offloading**.
 
