@@ -190,99 +190,92 @@ static inline int32_t clip_coeff(int32_t v) {
  * including the real x265/HM ones - see this file's header comment), only
  * well-scaled - forward quantization error is what's supposed to make the
  * picture lossy, not a transform bug. */
-/* SSE4.1 versions of the two 4x4 transforms.
+/* SSE2 versions of the 4x4 transforms, for both depths - the shifts are
+ * parameters.
  *
- * Each pass is a 4x4 matrix product: the scalar code walks it as three nested
- * loops, 64 multiply-adds per pass. But the four outputs of a pass share their
- * inputs, so one register covers a whole row. _mm_cvtepi16_epi32 widens the
- * four int16 of a row, _mm_mullo_epi32 multiplies by a broadcast matrix entry,
- * and the accumulation order, the rounding constants and the shifts stay
- * exactly as they were. _mm_packs_epi32 saturates to int16 precisely the way
- * clip_coeff() does.
+ * The block is two registers, rows 0-1 and rows 2-3. A pass is a matrix
+ * product over the rows: PMADDWD takes rows 0 and 1 interleaved against a
+ * pair of matrix entries, rows 2 and 3 against the next pair, and the two
+ * 32-bit sums add. Rounding and shift follow, and _mm_packs_epi32
+ * saturates to int16 exactly as clip_coeff() does. A transpose between the
+ * passes makes the second the same product.
  *
- * So the output is bit-identical, and that is verified by encoding the same
- * clip before and after and comparing the md5 of the bitstream - not by
- * reading the code and hoping.
- */
-#if defined(__x86_64__) || defined(_M_X64)
-
-__attribute__((target("sse4.1")))
-static inline __m128i row_i32(const int16_t *p) {
-    return _mm_cvtepi16_epi32(_mm_loadl_epi64((const __m128i *)p));
+ * The forward transform keeps its intermediate and its output in int16,
+ * where the scalar code keeps int32. They fit: a residual of at most 255 at
+ * eight bits, first pass shifting by 1, gives at most 4 * 64 * 255 >> 1 =
+ * 32640; at ten bits, 1023 and a shift by 3, 32736; and the second pass
+ * lands under 32768 too. So the results are the scalar code's - checked
+ * over two million pseudo-random blocks, extremes included, when this came
+ * in. The SSE4.1 versions this replaces multiplied lane by lane with
+ * PMULLD. */
+#if defined(__SSE2__)
+static inline __m128i pair16(int a0, int a1)
+{
+    return _mm_set1_epi32((int)(uint16_t)a0 | (int)((uint32_t)(uint16_t)a1 << 16));
 }
 
-__attribute__((target("sse4.1")))
-static void forward_transform_4x4_sse(const int16_t residual[16], const int16_t M[4][4],
-                                      int32_t out[16]) {
-    __m128i res[4];
-    for (int r = 0; r < 4; r++) res[r] = row_i32(&residual[r * 4]);
-
-    /* pass 1: tmp[i][c] = (sum_r M[i][r] * residual[r*4+c] + 1) >> 1 */
-    __m128i tmp[4];
-    const __m128i one_pred = _mm_set1_epi32(1);
+static inline void mat4_rows(const int16_t A[4][4], int transposed, __m128i x01, __m128i x23,
+                             int shift, __m128i *y01, __m128i *y23)
+{
+    const __m128i p01 = _mm_unpacklo_epi16(x01, _mm_srli_si128(x01, 8));
+    const __m128i p23 = _mm_unpacklo_epi16(x23, _mm_srli_si128(x23, 8));
+    const __m128i rnd = _mm_set1_epi32(1 << (shift - 1));
+    const __m128i sh = _mm_cvtsi32_si128(shift);
+    __m128i y[4];
     for (int i = 0; i < 4; i++) {
-        __m128i acc = _mm_setzero_si128();
-        for (int r = 0; r < 4; r++)
-            acc = _mm_add_epi32(acc, _mm_mullo_epi32(_mm_set1_epi32(M[i][r]), res[r]));
-        tmp[i] = _mm_srai_epi32(_mm_add_epi32(acc, one_pred), 1);
+        const int a0 = transposed ? A[0][i] : A[i][0], a1 = transposed ? A[1][i] : A[i][1];
+        const int a2 = transposed ? A[2][i] : A[i][2], a3 = transposed ? A[3][i] : A[i][3];
+        const __m128i s = _mm_add_epi32(_mm_madd_epi16(p01, pair16(a0, a1)),
+                                        _mm_madd_epi16(p23, pair16(a2, a3)));
+        y[i] = _mm_sra_epi32(_mm_add_epi32(s, rnd), sh);
     }
-
-    /* pass 2: out[i*4+j] = (sum_c M[j][c] * tmp[i][c] + 128) >> 8 */
-    __m128i column[4];
-    for (int c = 0; c < 4; c++)
-        column[c] = _mm_setr_epi32(M[0][c], M[1][c], M[2][c], M[3][c]);
-    const __m128i centoventotto = _mm_set1_epi32(128);
-    for (int i = 0; i < 4; i++) {
-        int32_t t[4];
-        _mm_storeu_si128((__m128i *)t, tmp[i]);
-        __m128i acc = _mm_setzero_si128();
-        for (int c = 0; c < 4; c++)
-            acc = _mm_add_epi32(acc, _mm_mullo_epi32(_mm_set1_epi32(t[c]), column[c]));
-        _mm_storeu_si128((__m128i *)&out[i * 4],
-                         _mm_srai_epi32(_mm_add_epi32(acc, centoventotto), 8));
-    }
+    *y01 = _mm_packs_epi32(y[0], y[1]);
+    *y23 = _mm_packs_epi32(y[2], y[3]);
 }
 
-__attribute__((target("sse4.1")))
-static void inverse_transform_4x4_sse(const int16_t coeff[16], const int16_t M[4][4],
-                                      int16_t out[16]) {
-    __m128i co[4];
-    for (int k = 0; k < 4; k++) co[k] = row_i32(&coeff[k * 4]);
-
-    /* pass 1: tmp[r][c] = clip((sum_k M[k][r] * coeff[k*4+c] + 64) >> 7) */
-    const __m128i sixtyfour = _mm_set1_epi32(64);
-    const __m128i alto = _mm_set1_epi32(32767), basso = _mm_set1_epi32(-32768);
-    int32_t tmp[4][4];
-    for (int r = 0; r < 4; r++) {
-        __m128i acc = _mm_setzero_si128();
-        for (int k = 0; k < 4; k++)
-            acc = _mm_add_epi32(acc, _mm_mullo_epi32(_mm_set1_epi32(M[k][r]), co[k]));
-        acc = _mm_srai_epi32(_mm_add_epi32(acc, sixtyfour), 7);
-        acc = _mm_min_epi32(_mm_max_epi32(acc, basso), alto);
-        _mm_storeu_si128((__m128i *)tmp[r], acc);
-    }
-
-    /* pass 2: out[r*4+c] = clip((sum_k M[k][c] * tmp[r][k] + 2048) >> 12) */
-    __m128i row_m[4];
-    for (int k = 0; k < 4; k++) row_m[k] = row_i32(M[k]);
-    const __m128i half_a_step = _mm_set1_epi32(2048);
-    for (int r = 0; r < 4; r++) {
-        __m128i acc = _mm_setzero_si128();
-        for (int k = 0; k < 4; k++)
-            acc = _mm_add_epi32(acc, _mm_mullo_epi32(_mm_set1_epi32(tmp[r][k]), row_m[k]));
-        acc = _mm_srai_epi32(_mm_add_epi32(acc, half_a_step), 12);
-        /* packs saturates to int16 exactly as clip_coeff does */
-        _mm_storel_epi64((__m128i *)&out[r * 4], _mm_packs_epi32(acc, acc));
-    }
+static inline void transpose4(__m128i *r01, __m128i *r23)
+{
+    const __m128i a = _mm_unpacklo_epi16(*r01, _mm_srli_si128(*r01, 8));
+    const __m128i b = _mm_unpacklo_epi16(*r23, _mm_srli_si128(*r23, 8));
+    *r01 = _mm_unpacklo_epi32(a, b);
+    *r23 = _mm_unpackhi_epi32(a, b);
 }
 
-static int ha_sse41(void) {
-    static int answer = -1;
-    if (answer < 0) answer = __builtin_cpu_supports("sse4.1") ? 1 : 0;
-    return answer;
+/* out[i*4+j] = (sum_c M[j][c] * tmp[i][c] + rnd) >> s2, tmp[i][c] = (sum_r
+ * M[i][r] * residual[r*4+c] + rnd) >> s1. */
+static void fwd4_sse2(const int16_t residual[16], const int16_t M[4][4], int s1, int s2,
+                      int32_t out[16])
+{
+    __m128i x01 = _mm_loadu_si128((const __m128i *)residual);
+    __m128i x23 = _mm_loadu_si128((const __m128i *)(residual + 8));
+    __m128i t01, t23;
+    mat4_rows(M, 0, x01, x23, s1, &t01, &t23);
+    transpose4(&t01, &t23);
+    mat4_rows(M, 0, t01, t23, s2, &x01, &x23);
+    transpose4(&x01, &x23);
+    _mm_storeu_si128((__m128i *)out, _mm_srai_epi32(_mm_unpacklo_epi16(x01, x01), 16));
+    _mm_storeu_si128((__m128i *)(out + 4), _mm_srai_epi32(_mm_unpackhi_epi16(x01, x01), 16));
+    _mm_storeu_si128((__m128i *)(out + 8), _mm_srai_epi32(_mm_unpacklo_epi16(x23, x23), 16));
+    _mm_storeu_si128((__m128i *)(out + 12), _mm_srai_epi32(_mm_unpackhi_epi16(x23, x23), 16));
+}
+
+/* 8.6.4.2: the columns with M transposed, (e + 64) >> 7 saturated, then the
+ * rows, (g + rnd) >> s2 saturated. */
+static void inv4_sse2(const int16_t coeff[16], const int16_t M[4][4], int s2, int16_t out[16])
+{
+    __m128i x01 = _mm_loadu_si128((const __m128i *)coeff);
+    __m128i x23 = _mm_loadu_si128((const __m128i *)(coeff + 8));
+    __m128i g01, g23;
+    mat4_rows(M, 1, x01, x23, 7, &g01, &g23);
+    transpose4(&g01, &g23);
+    mat4_rows(M, 1, g01, g23, s2, &x01, &x23);
+    transpose4(&x01, &x23);
+    _mm_storeu_si128((__m128i *)out, x01);
+    _mm_storeu_si128((__m128i *)(out + 8), x23);
 }
 #endif
 
+#if !defined(__SSE2__)
 static void forward_transform_4x4_scalar(const int16_t residual[16], const int16_t M[4][4], int32_t out[16]) {
     int32_t tmp[4][4];
     for (int c = 0; c < 4; c++) {
@@ -325,6 +318,7 @@ static void inverse_transform_4x4_scalar(const int16_t coeff[16], const int16_t 
         }
     }
 }
+#endif
 
 /* ===================== quantization (8.6.3) ===================== */
 
@@ -342,99 +336,120 @@ static const int levelScale[6] = { 40, 45, 51, 57, 64, 72 };
 #define HEVC_BDSHIFT 5
 #define HEVC_FLAT_M  16
 
-/* Precomputed exact reciprocal division factors for HEVC quantization (Rec. ITU-T H.265 8.6.3).
- * Replaces 16 64-bit hardware integer divisions per 4x4 block with a 1-cycle 64-bit multiply
- * and 40-bit right shift ((num + half_denom) * recip >> 40), verified 100% bit-exact across
- * all 52 QPs and all possible 16-bit coefficient amplitudes. */
-static const struct { uint64_t recip; uint32_t half_denom; } g_hevc_quant_factors[52] = {
-    /* QP  0 */ { 0x000066666667ULL,    320U },
-    /* QP  1 */ { 0x00005b05b05cULL,    360U },
-    /* QP  2 */ { 0x000050505051ULL,    408U },
-    /* QP  3 */ { 0x000047dc11f8ULL,    456U },
-    /* QP  4 */ { 0x000040000000ULL,    512U },
-    /* QP  5 */ { 0x000038e38e39ULL,    576U },
-    /* QP  6 */ { 0x000033333334ULL,    640U },
-    /* QP  7 */ { 0x00002d82d82eULL,    720U },
-    /* QP  8 */ { 0x000028282829ULL,    816U },
-    /* QP  9 */ { 0x000023ee08fcULL,    912U },
-    /* QP 10 */ { 0x000020000000ULL,   1024U },
-    /* QP 11 */ { 0x00001c71c71dULL,   1152U },
-    /* QP 12 */ { 0x00001999999aULL,   1280U },
-    /* QP 13 */ { 0x000016c16c17ULL,   1440U },
-    /* QP 14 */ { 0x000014141415ULL,   1632U },
-    /* QP 15 */ { 0x000011f7047eULL,   1824U },
-    /* QP 16 */ { 0x000010000000ULL,   2048U },
-    /* QP 17 */ { 0x00000e38e38fULL,   2304U },
-    /* QP 18 */ { 0x00000ccccccdULL,   2560U },
-    /* QP 19 */ { 0x00000b60b60cULL,   2880U },
-    /* QP 20 */ { 0x00000a0a0a0bULL,   3264U },
-    /* QP 21 */ { 0x000008fb823fULL,   3648U },
-    /* QP 22 */ { 0x000008000000ULL,   4096U },
-    /* QP 23 */ { 0x0000071c71c8ULL,   4608U },
-    /* QP 24 */ { 0x000006666667ULL,   5120U },
-    /* QP 25 */ { 0x000005b05b06ULL,   5760U },
-    /* QP 26 */ { 0x000005050506ULL,   6528U },
-    /* QP 27 */ { 0x0000047dc120ULL,   7296U },
-    /* QP 28 */ { 0x000004000000ULL,   8192U },
-    /* QP 29 */ { 0x0000038e38e4ULL,   9216U },
-    /* QP 30 */ { 0x000003333334ULL,  10240U },
-    /* QP 31 */ { 0x000002d82d83ULL,  11520U },
-    /* QP 32 */ { 0x000002828283ULL,  13056U },
-    /* QP 33 */ { 0x0000023ee090ULL,  14592U },
-    /* QP 34 */ { 0x000002000000ULL,  16384U },
-    /* QP 35 */ { 0x000001c71c72ULL,  18432U },
-    /* QP 36 */ { 0x00000199999aULL,  20480U },
-    /* QP 37 */ { 0x0000016c16c2ULL,  23040U },
-    /* QP 38 */ { 0x000001414142ULL,  26112U },
-    /* QP 39 */ { 0x0000011f7048ULL,  29184U },
-    /* QP 40 */ { 0x000001000000ULL,  32768U },
-    /* QP 41 */ { 0x000000e38e39ULL,  36864U },
-    /* QP 42 */ { 0x000000cccccdULL,  40960U },
-    /* QP 43 */ { 0x000000b60b61ULL,  46080U },
-    /* QP 44 */ { 0x000000a0a0a1ULL,  52224U },
-    /* QP 45 */ { 0x0000008fb824ULL,  58368U },
-    /* QP 46 */ { 0x000000800000ULL,  65536U },
-    /* QP 47 */ { 0x00000071c71dULL,  73728U },
-    /* QP 48 */ { 0x000000666667ULL,  81920U },
-    /* QP 49 */ { 0x0000005b05b1ULL,  92160U },
-    /* QP 50 */ { 0x000000505051ULL, 104448U },
-    /* QP 51 */ { 0x00000047dc12ULL, 116736U },
-};
-
-static int32_t dequant_level(int32_t level, int qp) {
-    int per = qp / 6, rem = qp % 6;
-    int64_t val = (int64_t)level * HEVC_FLAT_M * levelScale[rem];
-    val <<= per;
-    val = (val + (1 << (HEVC_BDSHIFT - 1))) >> HEVC_BDSHIFT;
-    return clip_coeff((int32_t)val);
+/* Levels from forward-transform outputs, for every block size and depth:
+ *
+ *     level = floor((|v| << shift + offset) / step),  step = 16 * levelScale[q % 6] << (q / 6)
+ *
+ * with the offset round_q12 twelfths of the step, the sign put back, and
+ * the magnitude capped at 32767. The step is levelScale times a power of
+ * two, 2^p with p = q / 6 + 4, and floor(floor(x / 2^p) / d) is
+ * floor(x / (d * 2^p)); so the division is a shift, then one by d <= 72,
+ * done as a multiplication by m = ceil(2^32 / d) and a shift by 32. That
+ * is exact while x * (m * d - 2^32) < 2^32: x stays under 2^21 (|v| under
+ * 2^16, shifted up by at most 8 and down by at least 4, the offset under
+ * the step) and m * d - 2^32 is under d, so it is. Four at a time with SSE2's 32x32 -> 64 multiplication. `n` is a multiple of
+ * eight. */
+static void quant_levels(const int32_t *v, int n, int shift, int q, int round_q12, int16_t *out)
+{
+    const int p = q / 6 + 4;
+    const uint32_t d = (uint32_t)levelScale[q % 6];
+    const uint32_t offset = (uint32_t)(((uint64_t)d << p) * (uint64_t)round_q12 / 12);
+    const uint32_t m = (uint32_t)((((uint64_t)1 << 32) + d - 1) / d);
+#if defined(__SSE2__)
+    const __m128i vm = _mm_set1_epi32((int)m), voff = _mm_set1_epi32((int)offset);
+    const __m128i sh_in = _mm_cvtsi32_si128(shift), sh_p = _mm_cvtsi32_si128(p);
+    const __m128i odd = _mm_set_epi32(-1, 0, -1, 0);
+    for (int i = 0; i < n; i += 8) {
+        __m128i lv[2], sg[2];
+        for (int h = 0; h < 2; h++) {
+            const __m128i x = _mm_loadu_si128((const __m128i *)(v + i + 4 * h));
+            const __m128i s = _mm_srai_epi32(x, 31);
+            const __m128i mag = _mm_sub_epi32(_mm_xor_si128(x, s), s);
+            const __m128i t = _mm_srl_epi32(_mm_add_epi32(_mm_sll_epi32(mag, sh_in), voff), sh_p);
+            const __m128i pe = _mm_mul_epu32(t, vm);                       /* lanes 0, 2 */
+            const __m128i po = _mm_mul_epu32(_mm_srli_epi64(t, 32), vm);   /* lanes 1, 3 */
+            lv[h] = _mm_or_si128(_mm_srli_epi64(pe, 32), _mm_and_si128(po, odd));
+            sg[h] = s;
+        }
+        /* packs caps the (non-negative) levels at 32767; the sign goes back
+         * on in sixteen bits, where -32767 is the far end, as in the scalar
+         * code. */
+        const __m128i l16 = _mm_packs_epi32(lv[0], lv[1]);
+        const __m128i s16 = _mm_packs_epi32(sg[0], sg[1]);
+        const __m128i r = _mm_sub_epi16(_mm_xor_si128(l16, s16), s16);
+        if (n - i >= 8) _mm_storeu_si128((__m128i *)(out + i), r);
+        else            _mm_storel_epi64((__m128i *)(out + i), r);
+    }
+#else
+    for (int i = 0; i < n; i++) {
+        const int32_t x = v[i];
+        const uint32_t mag = (uint32_t)(x < 0 ? -(int64_t)x : x);
+        const uint32_t t = ((mag << shift) + offset) >> p;
+        uint32_t l = (uint32_t)(((uint64_t)t * m) >> 32);
+        if (l > 32767) l = 32767;
+        out[i] = (int16_t)(x < 0 ? -(int32_t)l : (int32_t)l);
+    }
+#endif
 }
 
-static int32_t quantize_coeff(int32_t coeff_raw, int qp) {
-    int clamped_qp = qp < 0 ? 0 : (qp > 51 ? 51 : qp);
-    uint64_t recip = g_hevc_quant_factors[clamped_qp].recip;
-    uint32_t half_denom = g_hevc_quant_factors[clamped_qp].half_denom;
-    int sign = coeff_raw < 0 ? -1 : 1;
-    uint32_t mag = (uint32_t)(coeff_raw < 0 ? -coeff_raw : coeff_raw);
-    uint64_t num = (uint64_t)mag << HEVC_BDSHIFT;
-    int32_t level = (int32_t)(((num + half_denom) * recip) >> 40);
-    return sign * level;
+/* Levels back to scaled coefficients, 8.6.3 with the flat list:
+ *
+ *     d = clip16((level * 16 * levelScale[q % 6] << (q / 6) + (1 << (bd_shift - 1))) >> bd_shift)
+ *
+ * With a = q / 6 + 4 the scale is levelScale times 2^a. When a >= bd_shift
+ * the rounding term falls below the shift and d is level * levelScale <<
+ * (a - bd_shift); otherwise both terms divide by 2^a and d is (level *
+ * levelScale + (1 << (bd_shift - a - 1))) >> (bd_shift - a). Either way it
+ * fits 32 bits - level * levelScale is under 2^22 and the left shift is at
+ * most 9 - so SSE2 does eight at a time, and packs saturates as clip16
+ * does. `n` is a multiple of eight. */
+static void dequant_levels(const int16_t *c, int n, int q, int bd_shift, int16_t *out)
+{
+    const int a = q / 6 + 4;
+    const int ls = levelScale[q % 6];
+#if defined(__SSE2__)
+    const __m128i vls = _mm_set1_epi16((int16_t)ls);
+    const int up = a >= bd_shift;
+    const __m128i sh = _mm_cvtsi32_si128(up ? a - bd_shift : bd_shift - a);
+    const __m128i rnd = _mm_set1_epi32(up ? 0 : 1 << (bd_shift - a - 1));
+    for (int i = 0; i < n; i += 8) {
+        const __m128i x = _mm_loadu_si128((const __m128i *)(c + i));
+        const __m128i lo = _mm_mullo_epi16(x, vls), hi = _mm_mulhi_epi16(x, vls);
+        __m128i p0 = _mm_unpacklo_epi16(lo, hi), p1 = _mm_unpackhi_epi16(lo, hi);
+        if (up) {
+            p0 = _mm_sll_epi32(p0, sh);
+            p1 = _mm_sll_epi32(p1, sh);
+        } else {
+            p0 = _mm_sra_epi32(_mm_add_epi32(p0, rnd), sh);
+            p1 = _mm_sra_epi32(_mm_add_epi32(p1, rnd), sh);
+        }
+        _mm_storeu_si128((__m128i *)(out + i), _mm_packs_epi32(p0, p1));
+    }
+#else
+    const int64_t scale = (int64_t)ls << a;
+    for (int i = 0; i < n; i++) {
+        const int64_t v = ((int64_t)c[i] * scale + (1 << (bd_shift - 1))) >> bd_shift;
+        out[i] = (int16_t)(v > 32767 ? 32767 : (v < -32768 ? -32768 : v));
+    }
+#endif
 }
-
 
 static inline void forward_transform_4x4(const int16_t residual[16], const int16_t M[4][4],
                                          int32_t out[16]) {
-#if defined(__x86_64__) || defined(_M_X64)
-    if (ha_sse41()) { forward_transform_4x4_sse(residual, M, out); return; }
-#endif
+#if defined(__SSE2__)
+    fwd4_sse2(residual, M, 1, 8, out);
+#else
     forward_transform_4x4_scalar(residual, M, out);
+#endif
 }
 
 static inline void inverse_transform_4x4(const int16_t coeff[16], const int16_t M[4][4],
                                          int16_t out[16]) {
-#if defined(__x86_64__) || defined(_M_X64)
-    if (ha_sse41()) { inverse_transform_4x4_sse(coeff, M, out); return; }
-#endif
+#if defined(__SSE2__)
+    inv4_sse2(coeff, M, 12, out);
+#else
     inverse_transform_4x4_scalar(coeff, M, out);
+#endif
 }
 
 int hevc_chroma_qp_from_luma(int qp_luma) {
@@ -450,7 +465,7 @@ int hevc_chroma_qp_from_luma(int qp_luma) {
     return qpc_30_43[qpi - 30];
 }
 
-void hevc_transform_quant_4x4(const int16_t residual[16], int qp, int use_dst,
+void hevc_transform_quant_4x4(const int16_t residual[16], int qp, int use_dst, int round_q12,
                                int16_t coeff_out[16]) {
     /* Fast zero-residual bypass: if residual is all zero, output is all zero */
     const uint64_t *r64 = (const uint64_t *)residual;
@@ -462,21 +477,8 @@ void hevc_transform_quant_4x4(const int16_t residual[16], int qp, int use_dst,
     int32_t raw[16];
     forward_transform_4x4(residual, use_dst ? DST4 : DCT4, raw);
 
-    int clamped_qp = qp < 0 ? 0 : (qp > 51 ? 51 : qp);
-    uint64_t recip = g_hevc_quant_factors[clamped_qp].recip;
-    uint32_t half_denom = g_hevc_quant_factors[clamped_qp].half_denom;
-
-    for (int i = 0; i < 16; i++) {
-        int32_t coeff_raw = raw[i];
-        int sign = coeff_raw < 0 ? -1 : 1;
-        uint32_t mag = (uint32_t)(coeff_raw < 0 ? -coeff_raw : coeff_raw);
-        uint64_t num = (uint64_t)mag << HEVC_BDSHIFT;
-        int32_t level = (int32_t)(((num + half_denom) * recip) >> 40);
-        int32_t res = sign * level;
-        if (res > 32767) res = 32767;
-        if (res < -32768) res = -32768;
-        coeff_out[i] = (int16_t)res;
-    }
+    const int clamped_qp = qp < 0 ? 0 : (qp > 51 ? 51 : qp);
+    quant_levels(raw, 16, HEVC_BDSHIFT, clamped_qp, round_q12, coeff_out);
 }
 
 void hevc_dequant_itransform_4x4(const int16_t coeff[16], int qp, int use_dst,
@@ -489,14 +491,7 @@ void hevc_dequant_itransform_4x4(const int16_t coeff[16], int qp, int use_dst,
     }
 
     int16_t dq[16];
-    int per = qp / 6, rem = qp % 6;
-    int64_t scale = ((int64_t)HEVC_FLAT_M * levelScale[rem]) << per;
-    int64_t half_scale = 1 << (HEVC_BDSHIFT - 1);
-    for (int i = 0; i < 16; i++) {
-        int64_t val = (int64_t)coeff[i] * scale;
-        val = (val + half_scale) >> HEVC_BDSHIFT;
-        dq[i] = (int16_t)clip_coeff((int32_t)val);
-    }
+    dequant_levels(coeff, 16, qp, HEVC_BDSHIFT, dq);
     inverse_transform_4x4(dq, use_dst ? DST4 : DCT4, residual_out);
 }
 
@@ -526,6 +521,7 @@ void hevc_dequant_itransform_4x4(const int16_t coeff[16], int qp, int use_dst,
  */
 #define HEVC_BDSHIFT_10 7
 
+#if !defined(__SSE2__)
 static void forward_transform_4x4_10(const int16_t residual[16], const int16_t M[4][4],
                                      int32_t out[16]) {
     int32_t tmp[4][4];
@@ -564,7 +560,9 @@ static void inverse_transform_4x4_10(const int16_t coeff[16], const int16_t M[4]
     }
 }
 
-void hevc_transform_quant_4x4_10(const int16_t residual[16], int qp, int use_dst,
+#endif
+
+void hevc_transform_quant_4x4_10(const int16_t residual[16], int qp, int use_dst, int round_q12,
                                   int16_t coeff_out[16]) {
     const uint64_t *r64 = (const uint64_t *)residual;
     if ((r64[0] | r64[1] | r64[2] | r64[3]) == 0ULL) {
@@ -573,19 +571,16 @@ void hevc_transform_quant_4x4_10(const int16_t residual[16], int qp, int use_dst
     }
 
     int32_t raw[16];
+#if defined(__SSE2__)
+    fwd4_sse2(residual, use_dst ? DST4 : DCT4, 3, 8, raw);
+#else
     forward_transform_4x4_10(residual, use_dst ? DST4 : DCT4, raw);
+#endif
 
+    /* The algebraic inverse of the dequantizer below, with the caller's
+     * rounding. */
     const int q = qp < 0 ? 0 : (qp > 63 ? 63 : qp);
-    /* The algebraic inverse of the dequantizer below, rounded to nearest -
-     * the eight-bit path's reciprocal table does the same division. */
-    const uint64_t denom = (uint64_t)(HEVC_FLAT_M * levelScale[q % 6]) << (q / 6);
-    for (int i = 0; i < 16; i++) {
-        const int32_t v = raw[i];
-        const uint64_t mag = (uint64_t)(v < 0 ? -(int64_t)v : v);
-        int64_t level = (int64_t)(((mag << HEVC_BDSHIFT_10) + denom / 2) / denom);
-        if (level > 32767) level = 32767;
-        coeff_out[i] = (int16_t)(v < 0 ? -level : level);
-    }
+    quant_levels(raw, 16, HEVC_BDSHIFT_10, q, round_q12, coeff_out);
 }
 
 void hevc_dequant_itransform_4x4_10(const int16_t coeff[16], int qp, int use_dst,
@@ -597,12 +592,204 @@ void hevc_dequant_itransform_4x4_10(const int16_t coeff[16], int qp, int use_dst
     }
 
     const int q = qp < 0 ? 0 : (qp > 63 ? 63 : qp);
-    const int64_t scale = ((int64_t)HEVC_FLAT_M * levelScale[q % 6]) << (q / 6);
     int16_t dq[16];
-    for (int i = 0; i < 16; i++) {
-        int64_t val = (int64_t)coeff[i] * scale;
-        val = (val + (1 << (HEVC_BDSHIFT_10 - 1))) >> HEVC_BDSHIFT_10;
-        dq[i] = (int16_t)(val > 32767 ? 32767 : (val < -32768 ? -32768 : val));
-    }
+    dequant_levels(coeff, 16, q, HEVC_BDSHIFT_10, dq);
+#if defined(__SSE2__)
+    inv4_sse2(dq, use_dst ? DST4 : DCT4, 10, residual_out);
+#else
     inverse_transform_4x4_10(dq, use_dst ? DST4 : DCT4, residual_out);
+#endif
+}
+
+/* ===================== 8x8 (inter luma) ===================== */
+
+/* 8.6.4.2's transMatrix for nTbS = 8: rows 0, 4, 8 ... 28 of the 32-point
+ * matrix. */
+static const int16_t DCT8[8][8] = {
+    { 64,  64,  64,  64,  64,  64,  64,  64 },
+    { 89,  75,  50,  18, -18, -50, -75, -89 },
+    { 83,  36, -36, -83, -83, -36,  36,  83 },
+    { 75, -18, -89, -50,  50,  89,  18, -75 },
+    { 64, -64, -64,  64,  64, -64, -64,  64 },
+    { 50, -89,  18,  75, -75, -18,  89, -50 },
+    { 36, -83,  83, -36, -36,  83, -83,  36 },
+    { 18, -50,  75, -89,  89, -75,  50, -18 },
+};
+
+/* One 8-point DCT, forward and inverse, by even and odd halves - the same
+ * integer products as the matrix, so the same results, with about half of
+ * the multiplications. `s` is the stride between the eight inputs. */
+static inline void dct8_fwd(const int32_t *x, int s, int32_t y[8])
+{
+    int32_t e[4], o[4];
+    for (int k = 0; k < 4; k++) {
+        e[k] = x[k * s] + x[(7 - k) * s];
+        o[k] = x[k * s] - x[(7 - k) * s];
+    }
+    const int32_t ee0 = e[0] + e[3], eo0 = e[0] - e[3];
+    const int32_t ee1 = e[1] + e[2], eo1 = e[1] - e[2];
+    y[0] = 64 * ee0 + 64 * ee1;
+    y[4] = 64 * ee0 - 64 * ee1;
+    y[2] = 83 * eo0 + 36 * eo1;
+    y[6] = 36 * eo0 - 83 * eo1;
+    y[1] = 89 * o[0] + 75 * o[1] + 50 * o[2] + 18 * o[3];
+    y[3] = 75 * o[0] - 18 * o[1] - 89 * o[2] - 50 * o[3];
+    y[5] = 50 * o[0] - 89 * o[1] + 18 * o[2] + 75 * o[3];
+    y[7] = 18 * o[0] - 50 * o[1] + 75 * o[2] - 89 * o[3];
+}
+
+static inline void dct8_inv(const int32_t *x, int s, int32_t y[8])
+{
+    int32_t o[4];
+    for (int k = 0; k < 4; k++)
+        o[k] = DCT8[1][k] * x[1 * s] + DCT8[3][k] * x[3 * s]
+             + DCT8[5][k] * x[5 * s] + DCT8[7][k] * x[7 * s];
+    const int32_t eo0 = 83 * x[2 * s] + 36 * x[6 * s];
+    const int32_t eo1 = 36 * x[2 * s] - 83 * x[6 * s];
+    const int32_t ee0 = 64 * x[0] + 64 * x[4 * s];
+    const int32_t ee1 = 64 * x[0] - 64 * x[4 * s];
+    const int32_t e[4] = { ee0 + eo0, ee1 + eo1, ee1 - eo1, ee0 - eo0 };
+    for (int k = 0; k < 4; k++) {
+        y[k] = e[k] + o[k];
+        y[k + 4] = e[3 - k] - o[3 - k];
+    }
+}
+
+/* The same two transforms with SSE2, eight int16 per register.
+ *
+ * One pass is a matrix product over the rows of the block: Y[i] = sum_r
+ * A[i][r] * X[r], each X[r] a row of eight samples. _mm_madd_epi16 takes
+ * two rows at a time, interleaved, against a pair of matrix entries, and
+ * leaves 32-bit sums; the rounding and the shift follow, and _mm_packs_epi32
+ * saturates to int16 exactly as clip_coeff() does. A transpose between the
+ * passes turns the second one into the same product.
+ *
+ * The forward transform keeps its intermediate in int16 here, where the
+ * scalar code keeps int32. It fits by construction - HM's shifts are chosen
+ * for that: a residual of at most 255 at eight bits, or 1023 at ten, gives
+ * at most 64 * 8 * 255 >> 2 = 32640, or 64 * 8 * 1023 >> 4 = 32736, after
+ * the first pass, and the second pass lands under 32768 too. So both give
+ * the same numbers, and the check in the commit that brought this in ran
+ * two million blocks through both. */
+#if defined(__SSE2__)
+static inline void mat8_rows(const int16_t A[8][8], int transposed, const __m128i X[8], int shift,
+                             __m128i Y[8])
+{
+    __m128i lo[4], hi[4];
+    for (int k = 0; k < 4; k++) {
+        lo[k] = _mm_unpacklo_epi16(X[2 * k], X[2 * k + 1]);
+        hi[k] = _mm_unpackhi_epi16(X[2 * k], X[2 * k + 1]);
+    }
+    const __m128i rnd = _mm_set1_epi32(1 << (shift - 1));
+    const __m128i sh = _mm_cvtsi32_si128(shift);
+    for (int i = 0; i < 8; i++) {
+        __m128i al = rnd, ah = rnd;
+        for (int k = 0; k < 4; k++) {
+            const int a0 = transposed ? A[2 * k][i] : A[i][2 * k];
+            const int a1 = transposed ? A[2 * k + 1][i] : A[i][2 * k + 1];
+            const __m128i c = _mm_set1_epi32((int)(uint16_t)a0 | (int)((uint32_t)(uint16_t)a1 << 16));
+            al = _mm_add_epi32(al, _mm_madd_epi16(lo[k], c));
+            ah = _mm_add_epi32(ah, _mm_madd_epi16(hi[k], c));
+        }
+        Y[i] = _mm_packs_epi32(_mm_sra_epi32(al, sh), _mm_sra_epi32(ah, sh));
+    }
+}
+
+static inline void transpose8(__m128i r[8])
+{
+    const __m128i a0 = _mm_unpacklo_epi16(r[0], r[1]), a1 = _mm_unpackhi_epi16(r[0], r[1]);
+    const __m128i a2 = _mm_unpacklo_epi16(r[2], r[3]), a3 = _mm_unpackhi_epi16(r[2], r[3]);
+    const __m128i a4 = _mm_unpacklo_epi16(r[4], r[5]), a5 = _mm_unpackhi_epi16(r[4], r[5]);
+    const __m128i a6 = _mm_unpacklo_epi16(r[6], r[7]), a7 = _mm_unpackhi_epi16(r[6], r[7]);
+    const __m128i b0 = _mm_unpacklo_epi32(a0, a2), b1 = _mm_unpackhi_epi32(a0, a2);
+    const __m128i b2 = _mm_unpacklo_epi32(a1, a3), b3 = _mm_unpackhi_epi32(a1, a3);
+    const __m128i b4 = _mm_unpacklo_epi32(a4, a6), b5 = _mm_unpackhi_epi32(a4, a6);
+    const __m128i b6 = _mm_unpacklo_epi32(a5, a7), b7 = _mm_unpackhi_epi32(a5, a7);
+    r[0] = _mm_unpacklo_epi64(b0, b4); r[1] = _mm_unpackhi_epi64(b0, b4);
+    r[2] = _mm_unpacklo_epi64(b1, b5); r[3] = _mm_unpackhi_epi64(b1, b5);
+    r[4] = _mm_unpacklo_epi64(b2, b6); r[5] = _mm_unpackhi_epi64(b2, b6);
+    r[6] = _mm_unpacklo_epi64(b3, b7); r[7] = _mm_unpackhi_epi64(b3, b7);
+}
+#endif
+
+/* The forward transform is the encoder's to choose. Its shifts are HM's
+ * for 8x8 - log2(8) + BitDepth - 9 after the columns, 9 after the rows -
+ * so that the quantizer below, the exact inverse of the dequantizer,
+ * gives the same levels a residual would get at 4x4. `qp` is Qp', the
+ * QP plus QpBdOffset. */
+void hevc_transform_quant_8x8(const int16_t residual[64], int qp, int bit_depth, int round_q12,
+                               int16_t coeff_out[64]) {
+    int any = 0;
+    for (int i = 0; i < 64; i++) any |= residual[i];
+    if (!any) {
+        memset(coeff_out, 0, 64 * sizeof(int16_t));
+        return;
+    }
+    const int s1 = 3 + bit_depth - 9, s2 = 9;
+    const int q = qp < 0 ? 0 : (qp > 63 ? 63 : qp);
+    int32_t v[64];
+#if defined(__SSE2__)
+    __m128i x[8], t[8];
+    for (int r = 0; r < 8; r++) x[r] = _mm_loadu_si128((const __m128i *)(residual + 8 * r));
+    mat8_rows(DCT8, 0, x, s1, t);   /* t[i][c]: column c, frequency i */
+    transpose8(t);
+    mat8_rows(DCT8, 0, t, s2, x);   /* x[j][i]: coefficient (i, j) */
+    transpose8(x);
+    for (int i = 0; i < 8; i++) {
+        _mm_storeu_si128((__m128i *)(v + 8 * i), _mm_srai_epi32(_mm_unpacklo_epi16(x[i], x[i]), 16));
+        _mm_storeu_si128((__m128i *)(v + 8 * i + 4), _mm_srai_epi32(_mm_unpackhi_epi16(x[i], x[i]), 16));
+    }
+#else
+    int32_t tmp[8][8], in[64], col[8];
+    for (int i = 0; i < 64; i++) in[i] = residual[i];
+    for (int c = 0; c < 8; c++) {
+        dct8_fwd(in + c, 8, col);
+        for (int i = 0; i < 8; i++) tmp[i][c] = (col[i] + (1 << (s1 - 1))) >> s1;
+    }
+    for (int i = 0; i < 8; i++) {
+        int32_t row[8];
+        dct8_fwd(tmp[i], 1, row);
+        for (int j = 0; j < 8; j++) v[i * 8 + j] = (row[j] + (1 << (s2 - 1))) >> s2;
+    }
+#endif
+    quant_levels(v, 64, bit_depth + 3 - 5, q, round_q12, coeff_out);
+}
+
+/* The decoder's side, exactly: 8.6.2 scaling with the flat list, then
+ * 8.6.4.2 - columns, (e + 64) >> 7 clipped to sixteen bits, rows,
+ * (g + rnd) >> (20 - BitDepth). */
+void hevc_dequant_itransform_8x8(const int16_t coeff[64], int qp, int bit_depth,
+                                  int16_t residual_out[64]) {
+    int any = 0;
+    for (int i = 0; i < 64; i++) any |= coeff[i];
+    if (!any) {
+        memset(residual_out, 0, 64 * sizeof(int16_t));
+        return;
+    }
+    const int q = qp < 0 ? 0 : (qp > 63 ? 63 : qp);
+    int16_t d[64];
+    dequant_levels(coeff, 64, q, bit_depth + 3 - 5, d);
+    const int s2 = 20 - bit_depth;
+#if defined(__SSE2__)
+    __m128i x[8], g[8];
+    for (int k = 0; k < 8; k++) x[k] = _mm_loadu_si128((const __m128i *)(d + 8 * k));
+    mat8_rows(DCT8, 1, x, 7, g);    /* g[r][c], clipped as 8.6.4.2 wants */
+    transpose8(g);
+    mat8_rows(DCT8, 1, g, s2, x);   /* x[c][r] */
+    transpose8(x);
+    for (int r = 0; r < 8; r++) _mm_storeu_si128((__m128i *)(residual_out + 8 * r), x[r]);
+#else
+    int32_t din[64], g[8][8], col[8];
+    for (int i = 0; i < 64; i++) din[i] = d[i];
+    for (int c = 0; c < 8; c++) {
+        dct8_inv(din + c, 8, col);
+        for (int r = 0; r < 8; r++) g[r][c] = clip_coeff((col[r] + 64) >> 7);
+    }
+    for (int r = 0; r < 8; r++) {
+        int32_t row[8];
+        dct8_inv(g[r], 1, row);
+        for (int c = 0; c < 8; c++)
+            residual_out[r * 8 + c] = (int16_t)clip_coeff((row[c] + (1 << (s2 - 1))) >> s2);
+    }
+#endif
 }

@@ -483,3 +483,32 @@ static void FUNC(predict_inter)(hevcd_t *d, int x0, int y0,
         }
     }
 }
+
+/* The encoder's way in: one block from one reference picture, no weights -
+ * the prediction predict_inter() builds for such a block, with the same
+ * functions, so that the encoder's reconstruction is the decoder's to the
+ * sample. `mvx` and `mvy` count the plane's own fractions: quarters of a
+ * luma sample, eighths of a chroma one. `w` and `h` are at most MAX_SIDE. */
+void FUNC(hevc_mc_uni)(const pixel *ref, int stride, int w_pic, int h_pic,
+                       int x, int y, int w, int h, int mvx, int mvy, int chroma,
+                       pixel *dst, int dst_stride)
+{
+    const int steps = chroma ? 3 : 2;
+    const int fx = mvx & ((1 << steps) - 1), fy = mvy & ((1 << steps) - 1);
+    const int ix = x + (mvx >> steps), iy = y + (mvy >> steps);
+    if (!fx && !fy) {
+        int sp;
+        pixel border[MAX_SIDE * MAX_SIDE];
+        const pixel *src = FUNC(window)(ref, stride, w_pic, h_pic, ix, iy, w, h,
+                                        border, MAX_SIDE, &sp);
+        for (int r = 0; r < h; r++)
+            memcpy(dst + (size_t)r * dst_stride, src + (size_t)r * sp,
+                   (size_t)w * sizeof(pixel));
+        return;
+    }
+    int16_t p[MAX_SIDE * MAX_SIDE];
+    FUNC(interpolate)(ref, stride, w_pic, h_pic, ix, iy, w, h, fx, fy,
+                      chroma ? &hevcd_epel[0][0] : &hevcd_qpel[0][0],
+                      chroma ? 4 : 8, chroma ? 1 : 3, p, MAX_SIDE, BIT_DEPTH);
+    FUNC(one_pred)(dst, dst_stride, w, h, p, MAX_SIDE, BIT_DEPTH);
+}

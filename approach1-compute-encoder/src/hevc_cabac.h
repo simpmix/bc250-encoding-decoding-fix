@@ -87,7 +87,12 @@ extern "C" {
 #define HEVC_CTX_PRED_MODE  125   /* 1 context: inter (0) vs intra (1) */
 #define HEVC_CTX_MERGE_FLAG 126   /* 1 context: merge_flag */
 #define HEVC_CTX_MERGE_IDX  127   /* 1 context: merge_idx bin 0 */
-#define HEVC_NUM_CTX        128
+#define HEVC_CTX_MVD        128   /* 2 contexts: abs_mvd_greater0_flag, abs_mvd_greater1_flag */
+#define HEVC_CTX_MVP_IDX    130   /* 1 context: mvp_l0_flag */
+#define HEVC_CTX_ROOT_CBF   131   /* 1 context: rqt_root_cbf */
+#define HEVC_CTX_TRANS_SUBDIV 132 /* 3 contexts: split_transform_flag, 5 - log2TrafoSize */
+#define HEVC_CTX_SIG_CG     135   /* 4 contexts: coded_sub_block_flag, 0-1 luma, 2-3 chroma */
+#define HEVC_NUM_CTX        139
 
 typedef struct {
     /* Output sink: a plain bit-level bitstream_t (bitstream.h/.c, the same
@@ -108,7 +113,24 @@ typedef struct {
     int      num_buffered_bytes;
 
     uint8_t  ctx[HEVC_NUM_CTX];
+
+    /* Estimation: when set, nothing is written - every bin adds what it
+     * would cost to est_bits, in 1/32768 of a bit, and the context states
+     * move exactly as they would. See hevc_cabac_estimator(). */
+    int      est;
+    uint32_t est_bits;
 } hevc_cabac_t;
+
+/* A coder that counts instead of writing, starting from `from`'s context
+ * states. The encoder runs a candidate's syntax through one to learn what
+ * it costs - the same functions, the same order, the same contexts. */
+static inline void hevc_cabac_estimator(hevc_cabac_t *est, const hevc_cabac_t *from)
+{
+    *est = *from;
+    est->bs = NULL;
+    est->est = 1;
+    est->est_bits = 0;
+}
 
 /* Bind the coder to an output bit-writer (does not reset arithmetic/context
  * state - call hevc_cabac_reset_contexts() once, then hevc_cabac_start()
@@ -149,6 +171,25 @@ void hevc_cabac_code_pred_mode_flag(hevc_cabac_t *cb, int pred_mode);
 
 /* merge_idx for skip CU (ITU-T H.265 7.3.8.6): bin 0 coded with context 0. */
 void hevc_cabac_code_merge_idx(hevc_cabac_t *cb, int merge_idx);
+
+/* The inter prediction unit of a P-slice CU (7.3.8.6 and 7.3.8.9):
+ * merge_flag, the motion vector difference (in quarter samples) and
+ * mvp_l0_flag. There is one reference picture, so no ref_idx_l0, and no
+ * inter_pred_idc in a P-slice. */
+void hevc_cabac_code_merge_flag(hevc_cabac_t *cb, int merge);
+void hevc_cabac_code_mvd(hevc_cabac_t *cb, int mvd_x, int mvd_y);
+void hevc_cabac_code_mvp_idx(hevc_cabac_t *cb, int idx);
+
+/* split_transform_flag of a transform tree node of size 1 << log2_size. */
+void hevc_cabac_code_split_transform_flag(hevc_cabac_t *cb, int split, int log2_size);
+
+/* residual_coding() for one 8x8 transform block in diagonal scan, with at
+ * least one nonzero coefficient: coeff[y * 8 + x]. */
+void hevc_cabac_code_residual_8x8(hevc_cabac_t *cb, const int16_t coeff[64], int is_luma);
+
+/* rqt_root_cbf of an inter CU that is not a 2Nx2N merge (7.3.8.5): whether
+ * any residual follows at all. */
+void hevc_cabac_code_rqt_root_cbf(hevc_cabac_t *cb, int cbf);
 
 /* split_cu_flag: ctx_inc = (left neighbor CU coded at a depth greater than
  * `depth`) + (above neighbor CU coded at a depth greater than `depth`),

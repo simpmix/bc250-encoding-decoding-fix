@@ -114,6 +114,8 @@ void rc_init(rate_control_t *rc, rc_mode_t mode, uint32_t bitrate, double fps,
      * gap across the re-init (see rc_update_stats). */
     rc->last_frame_ns = 0;
     rc->measured_fps = 0.0;
+    rc->debt = 0.0;
+    rc->pixels = (double)width * (double)height;
 
     /* Diagnostic (BC250_DEBUG_RC=1): every rc_init with the target it was
      * actually handed and the base QP that fell out of it. Added while
@@ -322,6 +324,15 @@ void rc_update_stats(rate_control_t *rc, int bits_used) {
 
     rc->buffer_fullness -= drain;
 
+    /* The model's account is not clamped at the top: what was overspent is
+     * owed. At the bottom, CBR and low latency cannot bank unspent bits (a
+     * CBR stream pads them out), VBR may bank half a second's worth. */
+    if (rc->model) {
+        rc->debt += (double)bits_used - (double)drain;
+        const double floor = rc->mode == RC_VBR ? -(double)rc->target_bitrate / 2.0 : 0.0;
+        if (rc->debt < floor) rc->debt = floor;
+    }
+
     if (rc->buffer_fullness < 0) {
         rc->buffer_fullness = 0;
     } else if (rc->buffer_fullness > rc->buffer_size) {
@@ -349,5 +360,127 @@ void rc_set_quality_level(rate_control_t *rc, uint32_t quality_level) {
 
 uint32_t rc_get_quality_level(const rate_control_t *rc) {
     return rc ? rc->quality_level : 4;
+}
+
+/* ------------------------------------------------ model-based QP */
+
+/* The PI loop above steers QP from how full a clamped buffer is, which
+ * says nothing about what a picture will cost at a given QP. On a hard
+ * clip it opens far too low (the bits-per-pixel guess is anchored on
+ * testsrc), fills the buffer in a few pictures, winds up its integral,
+ * and then holds QP at 50-51 for a second while the debt drains: crowd_run
+ * at 10 Mbit/s came out at 23 dB, where QP 38 gives the same bitrate at
+ * about 29.
+ *
+ * The model instead keeps, for P and for I pictures, a complexity: the
+ * bits a picture cost, scaled to QP 12 by the rule that every
+ * RC_MODEL_QP_HALF steps of QP halve the bits. The next picture gets the
+ * QP at which that complexity costs the bits it is allowed - one
+ * picture's share of the bitrate, less a part of whatever the stream owes
+ * so far. Nothing saturates and nothing winds up; a wrong guess costs one
+ * picture. */
+#define RC_MODEL_QP_HALF 5.0   /* the HEVC encoder with its dead zone, crowd_run QP 22-37 */
+#define RC_MODEL_MAX_STEP 2    /* QP change from one P picture to the next */
+#define RC_MODEL_I_BOOST 2     /* I pictures this much finer: everything after predicts from them */
+#define RC_MODEL_I_OVER_P 4.0  /* I against P bits at one QP, until a P picture has been seen */
+
+static double rc_model_qp_exact(double cplx, double bits)
+{
+    return 12.0 + RC_MODEL_QP_HALF * log2(cplx / bits);
+}
+
+static int rc_model_qp_for(double cplx, double bits)
+{
+    return (int)lround(rc_model_qp_exact(cplx, bits));
+}
+
+static double rc_model_bits(double cplx, int qp)
+{
+    return cplx * pow(2.0, -(qp - 12) / RC_MODEL_QP_HALF);
+}
+
+/* Over how many pictures a debt is paid back: a second for VBR, half of
+ * one for CBR, a quarter for low latency.
+ *
+ * ⚠️ Not the low-latency mode's two-picture buffer. An I picture costs
+ * several pictures' budget, and paying that back within two pictures held
+ * QP at 49-51 for the ten after it - a fifth of a second of mush after every
+ * IDR, which Moonlight asks for after each lost packet. Over a quarter of a
+ * second the pictures after it lose one or two QP instead. */
+static double rc_model_horizon(const rate_control_t *rc)
+{
+    double h = rc->mode == RC_LOW_LATENCY ? rc->framerate / 4.0
+             : rc->mode == RC_CBR ? rc->framerate / 2.0 : rc->framerate;
+    return h < 2.0 ? 2.0 : h;
+}
+
+int rc_model_frame_qp(rate_control_t *rc, int intra)
+{
+    if (!rc) return 26;
+    if (rc->mode == RC_CQP) return rc->current_qp;
+
+    const double bpf = (double)rc->target_bitrate / rc->framerate;
+    double want = bpf - rc->debt / rc_model_horizon(rc);
+    if (want < bpf / 8.0) want = bpf / 8.0;
+    if (want > bpf * 4.0) want = bpf * 4.0;
+
+    int qp;
+    double cplx;   /* this picture's, for the size limit */
+    if (rc->cplx[0] > 0.0) {
+        const double exact = rc_model_qp_exact(rc->cplx[0], want);
+        qp = (int)lround(exact);
+        /* Hold the QP of the last P picture until the model moves a whole
+         * step away from it: a value near a rounding edge otherwise flips
+         * between two QPs picture after picture, and the picture flickers. */
+        if (rc->model_last_p_qp > 0 && fabs(exact - rc->model_last_p_qp) < 1.0) qp = rc->model_last_p_qp;
+        if (rc->model_last_p_qp > 0) {
+            if (qp > rc->model_last_p_qp + RC_MODEL_MAX_STEP) qp = rc->model_last_p_qp + RC_MODEL_MAX_STEP;
+            if (qp < rc->model_last_p_qp - RC_MODEL_MAX_STEP) qp = rc->model_last_p_qp - RC_MODEL_MAX_STEP;
+        }
+        if (intra) qp -= RC_MODEL_I_BOOST;
+        cplx = intra ? (rc->cplx[1] > 0.0 ? rc->cplx[1] : rc->cplx[0] * RC_MODEL_I_OVER_P) : rc->cplx[0];
+    } else if (rc->cplx[1] > 0.0) {
+        /* An I picture seen, no P yet: guess P from it. */
+        qp = rc_model_qp_for(rc->cplx[1] / RC_MODEL_I_OVER_P, want);
+        if (intra) qp -= RC_MODEL_I_BOOST;
+        cplx = intra ? rc->cplx[1] : rc->cplx[1] / RC_MODEL_I_OVER_P;
+    } else {
+        /* Nothing seen: bits per pixel against what the HEVC encoder
+         * spends on natural 1080p video - QP 36 at 0.1 bit per pixel.
+         * Rather high than low: the hardest derf clips need about that,
+         * and a picture guessed too coarse costs only itself, where one
+         * guessed too fine leaves a debt for the pictures after it. */
+        const double bpp = rc->pixels > 0.0 ? bpf / rc->pixels : 0.1;
+        qp = (int)lround(36.0 - RC_MODEL_QP_HALF * log2(bpp / 0.1)) - (intra ? RC_MODEL_I_BOOST : 0);
+        cplx = 0.0;
+    }
+
+    /* Never above the largest picture the caller allows. */
+    if (rc->max_frame_bits > 0 && cplx > 0.0)
+        while (qp < rc->qp_max && rc_model_bits(cplx, qp) > (double)rc->max_frame_bits) qp++;
+
+    if (qp < rc->qp_min) qp = rc->qp_min;
+    if (qp > rc->qp_max) qp = rc->qp_max;
+    rc->current_qp = qp;
+    return qp;
+}
+
+void rc_model_frame_coded(rate_control_t *rc, int intra, int qp, int bits)
+{
+    if (!rc || bits <= 0) return;
+    const double c = (double)bits * pow(2.0, (qp - 12) / RC_MODEL_QP_HALF);
+    double *k = &rc->cplx[intra ? 1 : 0];
+    /* Follow the content over several pictures, averaging log(complexity)
+     * with a quarter's weight on the newest.
+     *
+     * ⚠️ Not the last picture alone. A P picture at a high QP right after
+     * one at a lower QP is nearly all skips and costs a tenth of it, so the
+     * last picture alone said "cheap", the next QP went down, that picture
+     * was dear, and QP see-sawed by four every picture (ducks_take_off at
+     * 5 Mbit/s: 40, 44, 40, 44 ...). Only a jump of 16 times, a cut, starts
+     * the average over. */
+    if (*k > 0.0 && c < *k * 16.0 && c > *k / 16.0) *k = exp(0.75 * log(*k) + 0.25 * log(c));
+    else                                            *k = c;
+    if (!intra) rc->model_last_p_qp = qp;
 }
 

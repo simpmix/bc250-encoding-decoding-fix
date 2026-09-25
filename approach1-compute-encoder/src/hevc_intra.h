@@ -114,11 +114,22 @@ void hevc_predict_4x4(const uint8_t *recon_plane, int stride, int width, int hei
  * when QP >= 30, producing a 6-7 dB chroma PSNR deficit. */
 int hevc_chroma_qp_from_luma(int qp_luma);
 
+/* The quantizers' rounding offset, `round_q12`, in twelfths of a step: a
+ * level is floor(|c| / step + round_q12 / 12). Six rounds to nearest; less
+ * leaves a dead zone around zero, where a coefficient worth little costs
+ * more bits than the distortion it saves. HM's offsets are 1/6 for inter
+ * and 1/3 for intra; measured here, 1/6 for inter, 1/3 for intra in an I
+ * picture and 1/4 for intra in a P picture came out best. */
+#define HEVC_QUANT_ROUND_NEAREST 6
+#define HEVC_QUANT_ROUND_INTER   2
+#define HEVC_QUANT_ROUND_INTRA_I 4
+#define HEVC_QUANT_ROUND_INTRA_P 3
+
 /* Forward transform (DST-VII if use_dst, else DCT-II) + real HEVC
  * quantization (8.6.3) of a 4x4 pixel-domain residual (row-major,
  * residual[y*4+x] = source-prediction, may be negative). Writes 16
  * quantized signed coefficient levels, row-major, clipped to int16. */
-void hevc_transform_quant_4x4(const int16_t residual[16], int qp, int use_dst,
+void hevc_transform_quant_4x4(const int16_t residual[16], int qp, int use_dst, int round_q12,
                                int16_t coeff_out[16]);
 
 /* Real HEVC dequantization (8.6.3) + inverse transform (8.6.4) of 16
@@ -141,10 +152,17 @@ void hevc_predict_4x4_10(const uint16_t *recon_plane, int stride, int width, int
 int hevc_choose_luma_mode_10(int y_min, const uint16_t *src_y, const uint16_t *recon_y,
                              int stride, int width, int height, int x0, int y0,
                              uint16_t pred_out[16]);
-void hevc_transform_quant_4x4_10(const int16_t residual[16], int qp, int use_dst,
+void hevc_transform_quant_4x4_10(const int16_t residual[16], int qp, int use_dst, int round_q12,
                                   int16_t coeff_out[16]);
 void hevc_dequant_itransform_4x4_10(const int16_t coeff[16], int qp, int use_dst,
                                      int16_t residual_out[16]);
+
+/* 8x8, for inter luma: DCT-II only, at either depth - `qp` is Qp' as
+ * above, `bit_depth` 8 or 10. */
+void hevc_transform_quant_8x8(const int16_t residual[64], int qp, int bit_depth, int round_q12,
+                               int16_t coeff_out[64]);
+void hevc_dequant_itransform_8x8(const int16_t coeff[64], int qp, int bit_depth,
+                                  int16_t residual_out[64]);
 
 /* So that code compiled once per bit depth can name either set with the
  * decoder's FUNC(): FUNC(hevc_predict_4x4) is this at eight bits and the

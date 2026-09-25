@@ -336,14 +336,12 @@ option(BUILD_RC_BENCH "Build the off-board rate-control harness (tools/rc_bench.
 if(BUILD_RC_BENCH)
     set(RC_BENCH_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../tools/rc_bench.c)
     if(EXISTS ${RC_BENCH_SRC})
-        set(RC_BENCH_CORE
-            src/gpu_compute.c src/bitstream.c src/cavlc.c src/cabac.c
-            src/rate_control.c src/encoder_h264.c src/encoder_h265.c
-            src/hevc_cabac.c src/hevc_intra.c
-            src/cpu_simd_me.c src/dynamic_governor.c)
-        add_executable(rc_bench ${RC_BENCH_SRC} ${RC_BENCH_CORE})
+        # Linked against the driver itself rather than a list of its
+        # sources: the HEVC encoder predicts through the decoder's motion
+        # compensation, so that list would have to be most of the decoder.
+        add_executable(rc_bench ${RC_BENCH_SRC})
         target_include_directories(rc_bench PRIVATE src ${Vulkan_INCLUDE_DIRS})
-        target_link_libraries(rc_bench PRIVATE ${Vulkan_LIBRARIES} ${BC250_EXTRA_LIBS} m)
+        target_link_libraries(rc_bench PRIVATE bc250_drv_video ${Vulkan_LIBRARIES} ${BC250_EXTRA_LIBS} m)
     endif()
 endif()
 

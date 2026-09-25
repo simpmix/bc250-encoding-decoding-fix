@@ -51,12 +51,27 @@ typedef struct {
     /* Max frame size constraint (bits) and Quality/Speed preset level (1..7) */
     uint32_t max_frame_bits;  /* 0 = unconstrained */
     uint32_t quality_level;   /* 1 = Highest quality, 4 = Balanced, 7 = Highest speed */
+
+    /* Model-based QP (rc_model_frame_qp), for an encoder that turns it on
+     * and reports what every picture cost. rc_init() leaves `model` and
+     * the complexities alone - a new bitrate does not make the content
+     * any easier - and starts the debt over. */
+    int      model;
+    double   cplx[2];         /* bits * 2^((qp - 12) / 5) of P [0] and I [1] pictures, 0 = not seen */
+    double   debt;            /* bits produced minus bits allowed, since rc_init() */
+    int      model_last_p_qp; /* 0 = no P picture yet */
+    double   pixels;          /* per picture, for the first guess */
 } rate_control_t;
 
 void rc_init(rate_control_t *rc, rc_mode_t mode, uint32_t bitrate, double fps,
              uint32_t width, uint32_t height);
 int rc_get_frame_qp(rate_control_t *rc, uint64_t est_sad);
 void rc_update_stats(rate_control_t *rc, int bits_used);
+
+/* The model: the QP for the next picture, and what a picture coded at
+ * `qp` cost. rc_update_stats() still takes every picture's bits. */
+int rc_model_frame_qp(rate_control_t *rc, int intra);
+void rc_model_frame_coded(rate_control_t *rc, int intra, int qp, int bits);
 
 void rc_set_max_frame_size(rate_control_t *rc, uint32_t max_frame_bits);
 uint32_t rc_get_max_frame_size(const rate_control_t *rc);

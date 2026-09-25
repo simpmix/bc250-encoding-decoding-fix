@@ -33,7 +33,7 @@ static void test_transform_round_trip(void) {
         for (int i = 0; i < 16; i++) residual[i] = 20; /* constant residual */
 
         int16_t coeff[16];
-        hevc_transform_quant_4x4(residual, 4, use_dst, coeff);
+        hevc_transform_quant_4x4(residual, 4, use_dst, HEVC_QUANT_ROUND_NEAREST, coeff);
 
         int16_t recon[16];
         hevc_dequant_itransform_4x4(coeff, 4, use_dst, recon);
@@ -369,7 +369,7 @@ static void test_transform_round_trip_10(void) {
     for (int use_dst = 0; use_dst <= 1; use_dst++) {
         int16_t residual[16], coeff[16], recon[16];
         for (int i = 0; i < 16; i++) residual[i] = 80;
-        hevc_transform_quant_4x4_10(residual, 4 + 12, use_dst, coeff);
+        hevc_transform_quant_4x4_10(residual, 4 + 12, use_dst, HEVC_QUANT_ROUND_NEAREST, coeff);
         hevc_dequant_itransform_4x4_10(coeff, 4 + 12, use_dst, recon);
         for (int i = 0; i < 16; i++) {
             int diff = recon[i] - 80;
@@ -380,7 +380,7 @@ static void test_transform_round_trip_10(void) {
          * the extra shifts are for. */
         int16_t residual8[16], coeff8[16];
         for (int i = 0; i < 16; i++) residual8[i] = 20;
-        hevc_transform_quant_4x4(residual8, 4, use_dst, coeff8);
+        hevc_transform_quant_4x4(residual8, 4, use_dst, HEVC_QUANT_ROUND_NEAREST, coeff8);
         assert(memcmp(coeff, coeff8, sizeof(coeff)) == 0 && "ten-bit levels differ from eight-bit ones at the same QP");
     }
     printf("[test_hevc_encode] Ten-bit transform round-trip OK.\n");

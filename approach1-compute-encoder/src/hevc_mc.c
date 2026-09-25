@@ -16,6 +16,7 @@
  * eight bits are wrong by half a level per sample, everywhere, for ever.
  */
 #include "hevc_dec_internal.h"
+#include "hevc_inter.h"
 
 #include <stdatomic.h>
 #include <string.h>
