@@ -83,7 +83,13 @@ static void set_rate(x264_param_t *p, const h264_x264_config_t *cfg)
     if (cfg->crf > 0) {
         /* ICQ is constant quality, which is what CRF is. */
         p->rc.i_rc_method = X264_RC_CRF;
-        p->rc.f_rf_constant = (float)(cfg->crf > 51 ? 51 : cfg->crf);
+        float crf_val = (float)(cfg->crf > 51 ? 51 : cfg->crf);
+        const char *env_crf = getenv("BC250_X264_CRF");
+        if (env_crf && *env_crf) {
+            float env_val = (float)atof(env_crf);
+            if (env_val >= 0.0f && env_val <= 51.0f) crf_val = env_val;
+        }
+        p->rc.f_rf_constant = crf_val;
         return;
     }
 

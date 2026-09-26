@@ -125,6 +125,10 @@ To configure WiVRn for ~36ms motion-to-photon latency and ~190 Mbps throughput:
 | Variable | Default | Purpose |
 | :--- | :--- | :--- |
 | `LIBVA_DRIVER_NAME` | *(unset)* | Set to `bc250` to activate this driver. Handled automatically on BC-250 by systemd generator. |
+| `BC250_H264_BACKEND` | `x264` | `x264` uses Zen 2 CPU offload (fastest, leaves GPU free for games). Set to `compute` for GPU compute ME + Dynamic Governor. |
+| `BC250_X264_CRF` | `23` | Target Constant Rate Factor for x264 ICQ/CRF encodes (~5.0 Mbps at 1080p). Lower = higher quality/bitrate. |
+| `BC250_X264_PRESET` | *(auto)* | Override x264 preset (`veryfast`, `superfast`, `ultrafast`). |
+| `BC250_X264_THREADS` | `4` (live) / auto | Max worker threads for x264. Defaults to 4 for live streams (Sunshine, Steam Link, WiVRn). |
 | `BC250_FAST_MODE` | `1` | Restricts GPU compute overhead to <3–5%, preventing GPU starvation in heavy 3D games. |
 | `BC250_SLICES_PER_FRAME` | `4` | Number of slices per H.264 frame. Use `2` for multi-stream VR to prevent CPU thread congestion. |
 | `BC250_HEVC_SLICES` | `4` | Number of concurrent slices for HEVC encode (1..16). Yields 111+ fps at default 4. |

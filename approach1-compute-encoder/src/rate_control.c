@@ -286,7 +286,9 @@ void rc_update_stats(rate_control_t *rc, int bits_used) {
                 if (program_invocation_short_name &&
                     (strcmp(program_invocation_short_name, "sunshine") == 0 ||
                      strcmp(program_invocation_short_name, "wivrn-server") == 0 ||
-                     strcmp(program_invocation_short_name, "wivrn") == 0)) {
+                     strcmp(program_invocation_short_name, "wivrn") == 0 ||
+                     strcmp(program_invocation_short_name, "steam") == 0 ||
+                     strcmp(program_invocation_short_name, "streaming_client") == 0)) {
                     wallclock_drain_mode = 1;
                 } else {
                     wallclock_drain_mode = 0;

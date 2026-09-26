@@ -589,7 +589,9 @@ VAStatus bc250_CreateContext(VADriverContextP ctx, VAConfigID config_id, int pic
                                     if (program_invocation_short_name &&
                                         (strcmp(program_invocation_short_name, "sunshine") == 0 ||
                                          strcmp(program_invocation_short_name, "wivrn-server") == 0 ||
-                                         strcmp(program_invocation_short_name, "wivrn") == 0)) {
+                                         strcmp(program_invocation_short_name, "wivrn") == 0 ||
+                                         strcmp(program_invocation_short_name, "steam") == 0 ||
+                                         strcmp(program_invocation_short_name, "streaming_client") == 0)) {
                                         hevc_encoder_set_rc_mode(c->hevc_enc, RC_LOW_LATENCY);
                                     } else {
                                         hevc_encoder_set_rc_mode(c->hevc_enc, RC_CBR);
@@ -602,7 +604,9 @@ VAStatus bc250_CreateContext(VADriverContextP ctx, VAConfigID config_id, int pic
                                     if (program_invocation_short_name &&
                                         (strcmp(program_invocation_short_name, "sunshine") == 0 ||
                                          strcmp(program_invocation_short_name, "wivrn-server") == 0 ||
-                                         strcmp(program_invocation_short_name, "wivrn") == 0)) {
+                                         strcmp(program_invocation_short_name, "wivrn") == 0 ||
+                                         strcmp(program_invocation_short_name, "steam") == 0 ||
+                                         strcmp(program_invocation_short_name, "streaming_client") == 0)) {
                                         hevc_encoder_set_rc_mode(c->hevc_enc, RC_LOW_LATENCY);
                                     } else {
                                         hevc_encoder_set_rc_mode(c->hevc_enc, RC_VBR);
@@ -630,7 +634,9 @@ VAStatus bc250_CreateContext(VADriverContextP ctx, VAConfigID config_id, int pic
                                     if (program_invocation_short_name &&
                                         (strcmp(program_invocation_short_name, "sunshine") == 0 ||
                                          strcmp(program_invocation_short_name, "wivrn-server") == 0 ||
-                                         strcmp(program_invocation_short_name, "wivrn") == 0)) {
+                                         strcmp(program_invocation_short_name, "wivrn") == 0 ||
+                                         strcmp(program_invocation_short_name, "steam") == 0 ||
+                                         strcmp(program_invocation_short_name, "streaming_client") == 0)) {
                                         h264_encoder_set_rc_mode(c->h264_enc, RC_LOW_LATENCY);
                                     } else {
                                         h264_encoder_set_rc_mode(c->h264_enc, RC_CBR);
@@ -1216,13 +1222,13 @@ VAStatus bc250_RenderPicture(VADriverContextP ctx, VAContextID context, VABuffer
                             double pixel_rate = (double)w * (double)h * 30.0;
                             if (c->h264_enc) {
                                 double base_bps = pixel_rate * 0.0643004;
-                                uint32_t q = 20;
+                                uint32_t q = 23; /* standard x264 default CRF is 23 (~5.0 Mbps at 1080p) */
 #if defined(VA_CHECK_VERSION) && VA_CHECK_VERSION(1, 1, 0)
                                 if (rc->ICQ_quality_factor >= 1 && rc->ICQ_quality_factor <= 51) {
                                     q = rc->ICQ_quality_factor;
                                 }
 #endif
-                                target_bps = (uint32_t)(base_bps * pow(2.0, (20.0 - (double)q) / 6.0));
+                                target_bps = (uint32_t)(base_bps * pow(2.0, (23.0 - (double)q) / 6.0));
                                 /* x264 does real constant quality; the bitrate above
                                  * is only what the compute encoder falls back on. */
                                 h264_encoder_set_icq_quality(c->h264_enc, (int)q);
@@ -2279,7 +2285,9 @@ VAStatus bc250_Initialize(VADriverContextP ctx, int *major_version, int *minor_v
     }
 #if defined(__linux__)
     else if (program_invocation_short_name) {
-        if (strcmp(program_invocation_short_name, "sunshine") == 0) {
+        if (strcmp(program_invocation_short_name, "sunshine") == 0 ||
+            strcmp(program_invocation_short_name, "steam") == 0 ||
+            strcmp(program_invocation_short_name, "streaming_client") == 0) {
             def_threads = 2;
         } else if (strcmp(program_invocation_short_name, "wivrn-server") == 0 ||
                    strcmp(program_invocation_short_name, "wivrn") == 0) {

@@ -1854,12 +1854,12 @@ h264_encoder_t *h264_encoder_create(bc250_gpu_context_t *gpu_ctx,
             encoder->x264 = h264_x264_create();
     }
     if (encoder->x264) {
-        fprintf(stderr, "[bc250-h264] Encoder initialized: %ux%u, profile %d, backend=x264\n",
+        fprintf(stderr, "[bc250-h264] Encoder initialized: %ux%u, profile %d, backend=x264 (CPU libx264; set BC250_H264_BACKEND=compute for GPU)\n",
                 width, height, prof_idc);
         return encoder;
     }
 #endif
-    fprintf(stderr, "[bc250-h264] Encoder initialized: %ux%u @ %u fps, %u bps, profile %d, entropy=%s, hybrid_governor=enabled\n",
+    fprintf(stderr, "[bc250-h264] Encoder initialized: %ux%u @ %u fps, %u bps, profile %d, backend=compute, entropy=%s, hybrid_governor=enabled\n",
             width, height, encoder->fps, bitrate, prof_idc, use_cabac ? "CABAC" : "CAVLC");
 
     return encoder;
@@ -2181,7 +2181,9 @@ static bool is_live_caller(void)
     return program_invocation_short_name &&
            (strcmp(program_invocation_short_name, "sunshine") == 0 ||
             strcmp(program_invocation_short_name, "wivrn-server") == 0 ||
-            strcmp(program_invocation_short_name, "wivrn") == 0);
+            strcmp(program_invocation_short_name, "wivrn") == 0 ||
+            strcmp(program_invocation_short_name, "steam") == 0 ||
+            strcmp(program_invocation_short_name, "streaming_client") == 0);
 #else
     return false;
 #endif
@@ -2295,7 +2297,9 @@ static int get_default_slice_threads(int num_slices) {
     }
 #if defined(__linux__)
     if (program_invocation_short_name) {
-        if (strcmp(program_invocation_short_name, "sunshine") == 0) {
+        if (strcmp(program_invocation_short_name, "sunshine") == 0 ||
+            strcmp(program_invocation_short_name, "steam") == 0 ||
+            strcmp(program_invocation_short_name, "streaming_client") == 0) {
             return (num_slices < 2) ? 1 : 2;
         } else if (strcmp(program_invocation_short_name, "wivrn-server") == 0 ||
                    strcmp(program_invocation_short_name, "wivrn") == 0) {

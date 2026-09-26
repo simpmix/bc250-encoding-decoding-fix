@@ -262,11 +262,16 @@ else
     if pgrep -x gamescope > /dev/null 2>&1; then
         echo -e "  ${BLUE}ℹ Active Gamescope / Gaming Mode session detected.${NC}"
         if [ "$CAPEFF" = "0000000000000000" ] && [ "${SUNSHINE_UID:-0}" != "0" ]; then
-            echo -e "  ${YELLOW}! In Gaming Mode, Sunshine requires direct KMS capture permissions (cap_sys_admin)${NC}"
-            echo -e "    because Gamescope does not expose Wayland screencasting protocols to nested apps."
-            echo -e "    To enable Sunshine streaming in Gaming Mode, run:"
-            echo -e "      sudo setcap cap_sys_admin+ep \$(which sunshine)"
-            echo -e "      sudo ./tools/install_vaapi_boot_redirect.sh"
+            echo -e "  ${RED}✗ In Gaming Mode, Sunshine lacks DRM KMS capture capabilities (CapEff=0000000000000000).${NC}"
+            echo -e "    KMS capture will fail with 'Couldn't get drm fb for plane [0]: Permission denied' (black screen)!"
+            echo -e "    To fix Sunshine in Gaming Mode:"
+            echo -e "      1. Set capabilities on the canonical binary:"
+            echo -e "         sudo setcap cap_sys_admin,cap_sys_nice+p \$(readlink -f \$(which sunshine))"
+            echo -e "      2. Install the persistent boot redirect so driver loads under secure-exec:"
+            echo -e "         sudo ./tools/install_vaapi_boot_redirect.sh"
+            echo -e "      3. If launching Sunshine via systemd --user service, add to [Service] in sunshine.service:"
+            echo -e "         AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_NICE"
+            echo -e "      4. In Steam Game Mode Settings > System > Developer Mode, enable 'Force Composite'."
         fi
     fi
     echo

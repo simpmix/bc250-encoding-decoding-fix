@@ -41,13 +41,18 @@ void dynamic_governor_init(dynamic_governor_t *gov)
     if (program_invocation_short_name &&
         (strcmp(program_invocation_short_name, "sunshine") == 0 ||
          strcmp(program_invocation_short_name, "wivrn-server") == 0 ||
-         strcmp(program_invocation_short_name, "wivrn") == 0)) {
+         strcmp(program_invocation_short_name, "wivrn") == 0 ||
+         strcmp(program_invocation_short_name, "steam") == 0 ||
+         strcmp(program_invocation_short_name, "streaming_client") == 0)) {
         gov->enabled = true;
     }
-    if (program_invocation_short_name && strcmp(program_invocation_short_name, "sunshine") == 0) {
-        /* In Sunshine, frame pacing is managed by the network stream loop.
+    if (program_invocation_short_name &&
+        (strcmp(program_invocation_short_name, "sunshine") == 0 ||
+         strcmp(program_invocation_short_name, "steam") == 0 ||
+         strcmp(program_invocation_short_name, "streaming_client") == 0)) {
+        /* In Sunshine and Steam Link, frame pacing is managed by the network stream loop.
          * Premature Tier 3 P_Skip failover causes 0.5ms / 32ms latency oscillation.
-         * Auto-tune thresholds for Sunshine streaming. */
+         * Auto-tune thresholds for live streaming. */
         gov->tier1_threshold_ms = 14.0;
         gov->tier2_threshold_ms = 22.0;
         gov->tier3_threshold_ms = 45.0;

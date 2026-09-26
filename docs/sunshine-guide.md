@@ -150,10 +150,16 @@ In `streaming_log.txt` (or Steam console output), verify that Steam loads `/usr/
 When running Bazzite, SteamOS, or CachyOS in **Gaming Mode**, the compositor is **Gamescope**, which runs directly on DRM/KMS rather than a standard desktop Wayland/X11 session.
 
 #### 1. Grant KMS Capabilities to Sunshine
-Inside Gamescope, Sunshine cannot capture via Wayland or `xdg-desktop-portal`. It must capture the display via direct DRM/KMS screencasting (`capture = kms`). Grant file capabilities:
+Inside Gamescope, Sunshine cannot capture via Wayland or `xdg-desktop-portal`. It must capture the display via direct DRM/KMS screencasting (`capture = kms`).
+* On Arch / CachyOS / Bazzite, `/usr/bin/sunshine` is often a wrapper script or symlink. Use `readlink -f` to apply capabilities directly to the canonical binary:
 ```bash
-sudo setcap cap_sys_admin+ep $(which sunshine)
+sudo setcap cap_sys_admin,cap_sys_nice+p $(readlink -f $(which sunshine))
 ```
+* If Sunshine is launched via a systemd user unit (`systemctl --user start sunshine`), systemd strips file capabilities by default unless ambient capabilities are specified. Add the following under the `[Service]` block in `~/.config/systemd/user/sunshine.service`:
+```ini
+AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_NICE
+```
+* **Gamescope Direct Scanout (Black Screen Fix)**: When Gamescope bypasses its compositor for direct display scanout, KMS plane 0 cannot be read by secondary processes. To prevent this, open Steam Game Mode: **Settings -> System -> Developer Mode**, and enable **"Force Composite"**.
 
 #### 2. Install the VA-API Boot Redirect
 Granting `cap_sys_admin` puts Linux into secure-execution mode (`AT_SECURE`), causing `libva` to discard user environment variables like `LIBVA_DRIVER_NAME=bc250`. To ensure `libva` loads `bc250_drv_video.so` instead of the non-functional `radeonsi` driver:

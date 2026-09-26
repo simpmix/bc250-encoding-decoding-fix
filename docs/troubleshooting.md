@@ -326,18 +326,31 @@ When playing HEVC/H.265 files (such as *Big Buck Bunny* or MP4/MKV video streams
 
 ### Resolution Steps
 1. **Update to Driver v0.5.1 or Newer**: Driver v0.5.1 updates `bc250_CreateSurfaces2()` to explicitly reject external DMA-BUF imports with `VA_STATUS_ERROR_UNSUPPORTED_MEMORY_TYPE`, forcing Sunshine onto its working EGL blit pathway (`vaExportSurfaceHandle`) and Steam Link onto its frame copy path.
-2. **Grant Sunshine KMS Permissions**:
+2. **Grant Sunshine KMS Permissions on Canonical Binary**:
+   On Arch / CachyOS / Bazzite, `/usr/bin/sunshine` is often a wrapper script or symlink. Apply capabilities directly to the real binary:
    ```bash
-   sudo setcap cap_sys_admin+ep $(which sunshine)
+   sudo setcap cap_sys_admin,cap_sys_nice+p $(readlink -f $(which sunshine))
    ```
-3. **Install the VA-API Boot Redirect**:
+3. **If Running Sunshine via systemd User Service**:
+   Add ambient capabilities under `[Service]` in `~/.config/systemd/user/sunshine.service`:
+   ```ini
+   AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_NICE
+   ```
+   Then reload and restart the service:
+   ```bash
+   systemctl --user daemon-reload
+   systemctl --user restart sunshine
+   ```
+4. **Enable "Force Composite" in Gamescope**:
+   When Gamescope uses direct scanout, secondary KMS plane lookups fail with permission errors. In Steam Game Mode, go to **Settings -> System -> Developer Mode** and enable **"Force Composite"**.
+5. **Install the VA-API Boot Redirect**:
    ```bash
    sudo ./tools/install_vaapi_boot_redirect.sh
    ```
    This ensures `libva` maps `radeonsi_drv_video.so` directly to `bc250_drv_video.so`, bypassing `AT_SECURE` variable filtering.
-4. **Configure Active Adapter in Sunshine**:
+6. **Configure Active Adapter in Sunshine**:
    Run `./tools/bc250_diagnose.sh` to check which card node has the active monitor. In Sunshine Web Configuration (**Configuration -> Audio/Video**), set **adapter_name** to your active node (typically `/dev/dri/card1`).
-5. **Install 32-bit Driver for Steam Link**:
+7. **Install 32-bit Driver for Steam Link**:
    Ensure `/usr/lib32/dri/bc250_drv_video.so` is present on the host:
    ```bash
    ./tools/build_32bit.sh
@@ -374,3 +387,62 @@ When playing HEVC/H.265 files (such as *Big Buck Bunny* or MP4/MKV video streams
    -vulkan -windowed -noborder
    ```
    This ensures RDR 2 runs via native Vulkan in a borderless window, ensuring seamless capture by Steam Remote Play.
+
+---
+
+## 17. Low GPU Usage on `nvtop` / `amdgpu_top` during H.264 Encoding (`backend=x264`)
+
+### Symptoms
+* During FFmpeg H.264 VA-API encoding (`-c:v h264_vaapi`) or live streaming, `nvtop` or `amdgpu_top` shows minimal/zero GPU load.
+* Terminal logs output:
+  ```text
+  [bc250-h264] Encoder initialized: 1920x1080, profile 100, backend=x264 (CPU libx264; set BC250_H264_BACKEND=compute for GPU)
+  ```
+* CPU usage shows 4–6 active worker threads with 5.5x transcoding speeds.
+
+### Explanation & Backend Architecture
+By default in driver versions built with `libx264`:
+1. **H.264 CPU Offload (`backend=x264`)**: The full H.264 encoding pipeline (motion estimation, transform, quantization, and CABAC/CAVLC entropy coding) is handled by `libx264` using Zen 2 CPU cores. The GPU is only used for downloading the raw NV12 surface. This was adopted because the experimental GPU compute encoder took ~16ms of GPU time per frame (limiting throughput to ~28 fps and starving active games of GPU compute). `libx264` achieves 94–151 fps while leaving the GPU 100% dedicated to 3D rendering.
+2. **GPU Compute Encoder Opt-In (`backend=compute`)**: If you explicitly want the Vulkan compute pipeline with the **Dynamic Hybrid Governor** (GPU Motion Estimation + Zen 2 CPU entropy coding), launch your application with:
+   ```bash
+   export BC250_H264_BACKEND=compute
+   ```
+3. **HEVC Encoding**: HEVC (`-c:v hevc_vaapi`) **always** runs on the GPU compute engine with Vulkan compute shaders and registers active compute load on `nvtop` / `amdgpu_top`.
+
+### Fine-Tuning `libx264` Backend Parameters
+You can configure the CPU encoder behavior through environment variables:
+* **Target CRF Quality**:
+  ```bash
+  export BC250_X264_CRF=23   # Default is 23 (~5.0 Mbps for 1080p). Lower = higher bitrate/quality.
+  ```
+* **Encoding Preset**:
+  ```bash
+  export BC250_X264_PRESET=veryfast   # ultrafast, superfast, veryfast, faster
+  ```
+* **Thread Count**:
+  ```bash
+  export BC250_X264_THREADS=4        # Default: 4 threads for live streaming (Sunshine, WiVRn, Steam), auto for FFmpeg.
+  ```
+
+---
+
+## 18. Arch Linux / CachyOS 32-bit Driver Build: `lib32-x264` in AUR
+
+### Symptoms
+* Running `./tools/build_32bit.sh` on Arch Linux or CachyOS failed with:
+  ```text
+  error: target not found: lib32-x264
+  ```
+
+### Cause
+In Arch Linux, `lib32-x264` is located in the **Arch User Repository (AUR)** rather than the official `[multilib]` repository.
+
+### Solution
+1. Install `lib32-x264` via your AUR helper:
+   ```bash
+   paru -S lib32-x264
+   # or
+   yay -S lib32-x264
+   ```
+2. Re-run `./tools/build_32bit.sh`:
+   `tools/build_32bit.sh` now automatically detects `paru` / `yay` or falls back gracefully to the GPU compute encoder if `lib32-x264` is omitted, ensuring 32-bit driver compilation always succeeds.
