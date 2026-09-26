@@ -511,3 +511,7 @@ In Arch Linux, `lib32-x264` is located in the **Arch User Repository (AUR)** rat
    * Thread utilization can be customized via `export BC250_THREADS=2` (or `BC250_MAX_CPU_THREADS=2`) to prevent CPU saturation.
 3. **Command-Line Preset Honor**:
    * Passing `-preset <name>` on the FFmpeg command line is now intercepted and directly applied by the driver, bypassing FFmpeg's internal option filter. Universal environment variable aliases (`BC250_PRESET`, `BC250_X264_PRESET`, `X264_PRESET`) are also supported.
+4. **Persistent Surface Mapping Guard (SIGSEGV / Address Boundary Error Fix)**:
+   * In earlier builds, entering Dynamic Governor Tier 2 (CPU SIMD Motion Estimation) called raw `vkMapMemory` and `vkUnmapMemory` on the input surface device memory.
+   * Because VA-API surfaces are persistently mapped by the driver at creation time, unmapping the surface memory during Tier 2 caused FFmpeg's `AVHWFramesContext` surface pool to access unmapped virtual memory when recycling the surface on subsequent frames (`Map surface 0x2`), triggering a `SIGSEGV (Address boundary error)` crash.
+   * Resolved by routing all Tier 2 CPU SIMD searches through [`gpu_compute_map_surface()`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/gpu_compute.c) and [`gpu_compute_unmap_surface()`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/gpu_compute.c), which preserves persistently mapped surface pointers, and persistently mapping `ctx->recon_memory` to avoid per-frame mapping overhead.

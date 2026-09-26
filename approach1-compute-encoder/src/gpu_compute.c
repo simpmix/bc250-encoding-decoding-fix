@@ -1506,6 +1506,8 @@ void bc250_gpu_destroy(bc250_gpu_context_t *ctx) {
     if (ctx->recon_image.y_plane) {
         gpu_compute_destroy_image(ctx, ctx->recon_image, ctx->recon_memory);
         ctx->recon_image.y_plane = VK_NULL_HANDLE;
+        ctx->recon_memory.mapped_ptr = NULL;
+        ctx->recon_memory.memory = VK_NULL_HANDLE;
     }
 
     if (ctx->timestamp_pools[0]) vkDestroyQueryPool(ctx->device, ctx->timestamp_pools[0], NULL);
@@ -1704,6 +1706,9 @@ void gpu_compute_destroy_image(gpu_context_t *ctx, gpu_image_t image, gpu_memory
     if (image.uv_view) vkDestroyImageView(ctx->device, image.uv_view, NULL);
     if (image.y_plane) vkDestroyImage(ctx->device, image.y_plane, NULL);
     if (image.uv_plane) vkDestroyImage(ctx->device, image.uv_plane, NULL);
+    if (memory.mapped_ptr && memory.memory) {
+        vkUnmapMemory(ctx->device, memory.memory);
+    }
     if (memory.memory) vkFreeMemory(ctx->device, memory.memory, NULL);
 }
 
@@ -2261,8 +2266,16 @@ int gpu_compute_dispatch_encode_ext(gpu_context_t *ctx, gpu_image_t render_targe
     if (ctx->recon_image.y_plane == VK_NULL_HANDLE || ctx->recon_image.width != (uint32_t)width || ctx->recon_image.height != (uint32_t)height) {
         if (ctx->recon_image.y_plane != VK_NULL_HANDLE) {
             gpu_compute_destroy_image(ctx, ctx->recon_image, ctx->recon_memory);
+            ctx->recon_memory.mapped_ptr = NULL;
+            ctx->recon_memory.memory = VK_NULL_HANDLE;
         }
         gpu_compute_create_image(ctx, width, height, 0, &ctx->recon_image, &ctx->recon_memory);
+        if (ctx->recon_memory.memory != VK_NULL_HANDLE) {
+            void *mapped = NULL;
+            if (vkMapMemory(ctx->device, ctx->recon_memory.memory, 0, ctx->recon_memory.size, 0, &mapped) == VK_SUCCESS) {
+                ctx->recon_memory.mapped_ptr = mapped;
+            }
+        }
         ctx->has_recon_frame = false;
     }
 

@@ -2127,32 +2127,30 @@ int h264_encoder_submit_frame_ext(h264_encoder_t *encoder,
          * Only run if explicitly opted in via BC250_ENABLE_CPU_ME=1 / cpu_offload_enabled. */
         if (!is_idr && tier == GOV_TIER_2_CPU_OFFLOAD && encoder->governor.cpu_offload_enabled &&
             input_memory.memory != VK_NULL_HANDLE &&
-            gpu_ctx->has_recon_frame && gpu_ctx->recon_memory.memory != VK_NULL_HANDLE) {
+            gpu_ctx->has_recon_frame && gpu_ctx->recon_image.y_plane != VK_NULL_HANDLE &&
+            gpu_ctx->recon_memory.memory != VK_NULL_HANDLE) {
 
             gpu_nv12_layout_t in_layout, ref_layout;
-            if (gpu_compute_get_nv12_layout(gpu_ctx, &input_surface, input_memory, &in_layout) == 0 &&
-                gpu_compute_get_nv12_layout(gpu_ctx, &gpu_ctx->recon_image, gpu_ctx->recon_memory, &ref_layout) == 0) {
+            bool unmap_in = false, unmap_ref = false;
+            uint8_t *in_base = gpu_compute_map_surface(gpu_ctx, &input_surface, input_memory, &in_layout, &unmap_in);
+            uint8_t *ref_base = gpu_compute_map_surface(gpu_ctx, &gpu_ctx->recon_image, gpu_ctx->recon_memory, &ref_layout, &unmap_ref);
 
-                void *in_mapped = NULL, *ref_mapped = NULL;
-                if (vkMapMemory(gpu_ctx->device, input_memory.memory, 0, input_memory.size, 0, &in_mapped) == VK_SUCCESS) {
-                    if (vkMapMemory(gpu_ctx->device, gpu_ctx->recon_memory.memory, 0, gpu_ctx->recon_memory.size, 0, &ref_mapped) == VK_SUCCESS) {
-                        const uint8_t *src_y = (const uint8_t *)in_mapped + in_layout.y_offset;
-                        const uint8_t *ref_y = (const uint8_t *)ref_mapped + ref_layout.y_offset;
+            if (in_base && ref_base) {
+                const uint8_t *src_y = in_base + in_layout.y_offset;
+                const uint8_t *ref_y = ref_base + ref_layout.y_offset;
 
-                        if (cpu_simd_me_search_frame(src_y, (int)in_layout.y_pitch,
-                                                     ref_y, (int)ref_layout.y_pitch,
-                                                     encoder->width, encoder->height,
-                                                     encoder->cpu_mvs,
-                                                     &encoder->me_cfg) == 0) {
-                            cpu_mvs = encoder->cpu_mvs;
-                            me_mode = 2;
-                        }
-
-                        vkUnmapMemory(gpu_ctx->device, gpu_ctx->recon_memory.memory);
-                    }
-                    vkUnmapMemory(gpu_ctx->device, input_memory.memory);
+                if (cpu_simd_me_search_frame(src_y, (int)in_layout.y_pitch,
+                                             ref_y, (int)ref_layout.y_pitch,
+                                             encoder->width, encoder->height,
+                                             encoder->cpu_mvs,
+                                             &encoder->me_cfg) == 0) {
+                    cpu_mvs = encoder->cpu_mvs;
+                    me_mode = 2;
                 }
             }
+
+            gpu_compute_unmap_surface(gpu_ctx, gpu_ctx->recon_memory, unmap_ref);
+            gpu_compute_unmap_surface(gpu_ctx, input_memory, unmap_in);
         }
 
         gpu_compute_dispatch_encode_ext(gpu_ctx, input_surface, encoder->width, encoder->height,
