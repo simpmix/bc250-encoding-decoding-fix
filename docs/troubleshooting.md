@@ -410,12 +410,35 @@ When playing HEVC/H.265 files (such as *Big Buck Bunny* or MP4/MKV video streams
    When `BC250_H264_BACKEND=compute` is active, `amdgpu_top` and `nvtop` will register active GPU compute load.
 3. **HEVC Encoding**:
    HEVC (`-c:v hevc_vaapi`) **always** runs on the GPU compute engine and registers active compute load on `nvtop` / `amdgpu_top`.
-4. **Why was "veryfast" selected?**:
-   In FFmpeg, the standard `-preset` flag belongs strictly to software `libx264` and is **ignored** by FFmpeg's `h264_vaapi` wrapper. To configure the speed/quality preset in VA-API, you can:
-   * Pass FFmpeg's compression level: `-compression_level <1-7>` (1 = highest quality, 4 = balanced, 7 = fastest).
-   * Or directly set the environment variable: `export BC250_X264_PRESET=medium` (or `slow`, `faster`, `superfast`, `ultrafast`).
-5. **Why was FFmpeg using 100% CPU previously?**:
-   Previously, offline transcoding defaulted to x264 auto-threading (`threads = 0`), which spawned 16+ worker threads across all Zen 2 logical cores and caused cooling fans to spin up. The driver now defaults to **4 worker threads** (`threads 4`) for both live streaming and offline transcoding, capping CPU usage at ~250% and keeping system cooling quiet.
+### FFmpeg Logs & Parameter Explanations (from Terminal Output)
+
+1. **`Codec AVOption preset (Encoding preset) has not been used for any stream`**:
+   * **Why it happens**: In FFmpeg, the `-preset` option belongs strictly to software `libx264`. Hardware encoders like `h264_vaapi` do NOT accept `-preset` and FFmpeg's CLI parser ignores the flag.
+   * **How to change presets in VA-API**:
+     * Use FFmpeg's VA-API compression level: `-compression_level <1-7>` (1 = highest quality / slower, 4 = balanced, 7 = fastest).
+     * Or set the driver environment variable directly: `export BC250_X264_PRESET=medium` (or `slow`, `fast`, `faster`, `superfast`, `ultrafast`).
+
+2. **`[h264_vaapi] No quality level set; using default (20)`**:
+   * **Why it happens**: This is a standard informational warning from FFmpeg when no target bitrate (`-b:v`) or QP (`-qp`) is specified on the command line.
+   * **How the driver responds**: The driver cleanly handles this by engaging Intelligent Constant Quality (ICQ) mode at default quality level 23 (~5.0 Mbps for 1080p).
+   * **How to set quality explicitly**: Pass `-qp <1-51>` or `-b:v <bitrate>` (e.g. `-b:v 8M`), or override via `export BC250_X264_CRF=20`.
+
+3. **`[h264_vaapi] Driver does not support some wanted packed headers (wanted 0xd, found 0x1)`**:
+   * **Why it happens**: FFmpeg asks if the driver wants external packed slice and picture headers (`0xd = SEQUENCE | PICTURE | SLICE`).
+   * **Why it is harmless**: The BC-250 driver deliberately advertises `0x1` (`VA_ENC_PACKED_HEADER_SEQUENCE`) so container muxers extract MP4 global headers (`avcC`), while the driver generates conformant in-band SPS, PPS, AUD, and slice headers directly. This log is purely informational and not an error.
+
+4. **`threads 0` vs `threads 4` (CPU Utilization)**:
+   * In driver versions prior to commit `83fbca8`, offline transcoding defaulted to `threads 0` (auto-detect all cores), which spawned 24 worker threads across all 16 Zen 2 threads and pinned CPU at 100%.
+   * In commit `83fbca8` (v0.5.1+), offline transcoding is automatically capped to **4 worker threads** (`threads 4`), reducing CPU load to ~250% and keeping cooling fans quiet.
+   * You can explicitly adjust thread counts at runtime: `export BC250_X264_THREADS=4` or `export BC250_MAX_CPU_THREADS=4`.
+
+5. **`backend=x264` vs `backend=compute` (GPU Load)**:
+   * By default, H.264 uses the high-performance CPU offload (`backend=x264`), ensuring 100% of the 40 GPU Compute Units are kept free for running 3D games.
+   * To encode using the GPU's 40 Compute Units with OpenCL Motion Estimation and the Dynamic Hybrid Governor, set:
+     ```bash
+     export BC250_H264_BACKEND=compute
+     ```
+   * When `BC250_H264_BACKEND=compute` is set, `nvtop` and `amdgpu_top` will reflect active GPU compute load. HEVC (`-c:v hevc_vaapi`) always runs on the GPU.
 
 ### Fine-Tuning `libx264` Backend Parameters
 * **Target CRF Quality**:
