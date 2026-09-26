@@ -2279,12 +2279,13 @@ VAStatus bc250_Initialize(VADriverContextP ctx, int *major_version, int *minor_v
      * Multi-threading can be explicitly enabled by the user via BC250_MAX_CPU_THREADS. */
     setenv("OMP_WAIT_POLICY", "PASSIVE", 1);
     setenv("GOMP_SPINCOUNT", "0", 1);
-    omp_set_dynamic(0);
     const char *max_t = getenv("BC250_MAX_CPU_THREADS");
-    int def_threads = 1;
+    if (!max_t) max_t = getenv("BC250_THREADS");
+    if (!max_t) max_t = getenv("BC250_CPU_THREADS");
+    int def_threads = 4;
     if (max_t && *max_t) {
         int v = atoi(max_t);
-        if (v > 0 && v <= 8) def_threads = v;
+        if (v > 0 && v <= 16) def_threads = v;
     }
 #if defined(__linux__)
     else if (program_invocation_short_name) {
@@ -2294,6 +2295,8 @@ VAStatus bc250_Initialize(VADriverContextP ctx, int *major_version, int *minor_v
             def_threads = 2;
         } else if (strcmp(program_invocation_short_name, "wivrn-server") == 0 ||
                    strcmp(program_invocation_short_name, "wivrn") == 0) {
+            def_threads = 4;
+        } else if (strcmp(program_invocation_short_name, "ffmpeg") == 0) {
             def_threads = 4;
         }
     }

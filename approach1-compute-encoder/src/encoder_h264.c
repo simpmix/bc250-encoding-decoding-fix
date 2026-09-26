@@ -1858,12 +1858,21 @@ h264_encoder_t *h264_encoder_create(bc250_gpu_context_t *gpu_ctx,
                 width, height, prof_idc);
         return encoder;
     }
-#endif
     /* Compute/Hybrid GPU+CPU backend */
-    encoder->governor.enabled = true;
-    encoder->governor.cpu_offload_enabled = true;
-    fprintf(stderr, "[bc250-h264] Encoder initialized: %ux%u @ %u fps, %u bps, profile %d, backend=compute, entropy=%s, hybrid_governor=enabled\n",
-            width, height, encoder->fps, bitrate, prof_idc, use_cabac ? "CABAC" : "CAVLC");
+    const char *be = getenv("BC250_H264_BACKEND");
+    bool gpu_only = be && strcmp(be, "gpu") == 0;
+    if (gpu_only) {
+        encoder->governor.enabled = false;
+        encoder->governor.cpu_offload_enabled = false;
+    } else {
+        encoder->governor.enabled = true;
+        encoder->governor.cpu_offload_enabled = true;
+    }
+    fprintf(stderr, "[bc250-h264] Encoder initialized: %ux%u @ %u fps, %u bps, profile %d, backend=%s, entropy=%s, hybrid_governor=%s\n",
+            width, height, encoder->fps, bitrate, prof_idc,
+            gpu_only ? "gpu" : (be && strcmp(be, "hybrid") == 0 ? "hybrid" : "compute"),
+            use_cabac ? "CABAC" : "CAVLC",
+            encoder->governor.enabled ? "enabled" : "disabled");
 
     return encoder;
 }
@@ -2288,9 +2297,11 @@ int h264_encoder_encode_frame(h264_encoder_t *encoder,
 static int get_default_slice_threads(int num_slices) {
     int threads = 1;
     const char *env_threads = getenv("BC250_MAX_CPU_THREADS");
+    if (!env_threads) env_threads = getenv("BC250_THREADS");
+    if (!env_threads) env_threads = getenv("BC250_CPU_THREADS");
     if (env_threads) {
         int t = atoi(env_threads);
-        if (t >= 1 && t <= 8) return (num_slices < t) ? num_slices : t;
+        if (t >= 1 && t <= 16) return (num_slices < t) ? num_slices : t;
     }
     const char *env_no_omp = getenv("BC250_DISABLE_OPENMP");
     if (env_no_omp && (strcmp(env_no_omp, "0") != 0 && strcmp(env_no_omp, "false") != 0)) {
@@ -2305,10 +2316,12 @@ static int get_default_slice_threads(int num_slices) {
         } else if (strcmp(program_invocation_short_name, "wivrn-server") == 0 ||
                    strcmp(program_invocation_short_name, "wivrn") == 0) {
             return (num_slices < 4) ? num_slices : 4;
+        } else if (strcmp(program_invocation_short_name, "ffmpeg") == 0) {
+            return (num_slices < 4) ? num_slices : 4;
         }
     }
 #endif
-    return threads;
+    return (num_slices < 4) ? num_slices : 4;
 }
 
 int h264_encoder_finish_frame(h264_encoder_t *encoder,
@@ -2450,7 +2463,9 @@ int h264_encoder_finish_frame(h264_encoder_t *encoder,
          * the same safe fallback. */
         if (gpu_compute_sync_slot(gpu_ctx, pending->gpu_slot) == 0) {
             double last_gpu_lat = gpu_compute_get_last_latency_ms(gpu_ctx);
-            dynamic_governor_update(&encoder->governor, last_gpu_lat);
+            if (!is_idr) {
+                dynamic_governor_update(&encoder->governor, last_gpu_lat);
+            }
         if (ph) {
             clock_gettime(CLOCK_MONOTONIC, &ph_d);
             ph_begin_ms    = (double)(ph_b.tv_sec - ph_a.tv_sec) * 1000.0 +

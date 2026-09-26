@@ -141,13 +141,23 @@ void cpu_simd_me_config_init(cpu_simd_me_config_t *cfg, uint32_t width, uint32_t
     cfg->height = height;
     cfg->width_in_mbs = (width + 15) / 16;
     cfg->height_in_mbs = (height + 15) / 16;
-    cfg->search_radius = 8;
-    cfg->num_threads = 1; /* Default to 1 worker thread to preserve CPU headroom */
+    cfg->num_threads = 4; /* Default to 4 worker threads for fast AVX2 SIMD ME */
     const char *env_threads = getenv("BC250_MAX_CPU_THREADS");
+    if (!env_threads) env_threads = getenv("BC250_THREADS");
+    if (!env_threads) env_threads = getenv("BC250_CPU_THREADS");
     if (env_threads && *env_threads) {
         int t = atoi(env_threads);
-        if (t > 0 && t <= 8) cfg->num_threads = t;
+        if (t > 0 && t <= 16) cfg->num_threads = t;
     }
+#if defined(__linux__)
+    if (program_invocation_short_name &&
+        (strcmp(program_invocation_short_name, "sunshine") == 0 ||
+         strcmp(program_invocation_short_name, "steam") == 0 ||
+         strcmp(program_invocation_short_name, "streaming_client") == 0)) {
+        /* In live streaming, cap to 2 threads to guarantee game CPU headroom */
+        if (!env_threads && cfg->num_threads > 2) cfg->num_threads = 2;
+    }
+#endif
     cfg->core_ids[0] = -1;
     cfg->core_ids[1] = -1;
 
@@ -211,8 +221,16 @@ int cpu_simd_me_search_frame(const uint8_t *src_y, int src_pitch,
     if (max_rad < 2) max_rad = 2;
     if (max_rad > 16) max_rad = 16;
 
-    int threads = (cfg && cfg->num_threads > 0) ? cfg->num_threads : 1;
-    if (threads > 2) threads = 2; /* Cap at 2 threads to guarantee game CPU headroom */
+    int threads = (cfg && cfg->num_threads > 0) ? cfg->num_threads : 4;
+#if defined(__linux__)
+    if (program_invocation_short_name &&
+        (strcmp(program_invocation_short_name, "sunshine") == 0 ||
+         strcmp(program_invocation_short_name, "steam") == 0 ||
+         strcmp(program_invocation_short_name, "streaming_client") == 0)) {
+        if (threads > 2) threads = 2; /* Cap at 2 threads to guarantee game CPU headroom */
+    }
+#endif
+    if (threads > 16) threads = 16;
 
     const ivec2_t search_pattern[8] = {
         { 0,  1}, { 0, -1}, { 1,  0}, {-1,  0},
