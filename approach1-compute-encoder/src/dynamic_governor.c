@@ -50,12 +50,16 @@ void dynamic_governor_init(dynamic_governor_t *gov)
         (strcmp(program_invocation_short_name, "sunshine") == 0 ||
          strcmp(program_invocation_short_name, "steam") == 0 ||
          strcmp(program_invocation_short_name, "streaming_client") == 0)) {
-        /* In Sunshine and Steam Link, frame pacing is managed by the network stream loop.
-         * Premature Tier 3 P_Skip failover causes 0.5ms / 32ms latency oscillation.
-         * Auto-tune thresholds for live streaming. */
-        gov->tier1_threshold_ms = 14.0;
-        gov->tier2_threshold_ms = 22.0;
-        gov->tier3_threshold_ms = 45.0;
+        /* In Sunshine and Steam Link, enable hybrid CPU SIMD ME offload by default
+         * and tune thresholds to protect 60fps streaming deadlines (<16.6ms).
+         * Tier 0: < 7.0ms (GPU Full ME)
+         * Tier 1: 7.0 - 10.5ms (GPU Fast ME)
+         * Tier 2: 10.5 - 15.5ms (CPU SIMD Offload, relieves GPU CUs for games)
+         * Tier 3: > 15.5ms (Emergency Failover P_Skip) */
+        gov->cpu_offload_enabled = true;
+        gov->tier1_threshold_ms = 7.0;
+        gov->tier2_threshold_ms = 10.5;
+        gov->tier3_threshold_ms = 15.5;
     }
 #endif
 
@@ -86,6 +90,8 @@ void dynamic_governor_init(dynamic_governor_t *gov)
     if (!env_cpu_me) env_cpu_me = getenv("BC250_TIER2_ENABLE");
     if (env_cpu_me && (strcmp(env_cpu_me, "1") == 0 || strcmp(env_cpu_me, "true") == 0)) {
         gov->cpu_offload_enabled = true;
+    } else if (env_cpu_me && (strcmp(env_cpu_me, "0") == 0 || strcmp(env_cpu_me, "false") == 0)) {
+        gov->cpu_offload_enabled = false;
     }
 
     const char *env_hyst = getenv("BC250_GOVERNOR_HYSTERESIS");
