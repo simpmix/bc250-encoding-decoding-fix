@@ -24,12 +24,72 @@ struct h264_x264 {
 /* ultrafast .. faster, in the order x264 trades speed for bits. */
 static const char *const presets[] = { "ultrafast", "superfast", "veryfast", "faster" };
 
+static const char *get_cmdline_preset(void)
+{
+#if defined(__linux__)
+    static char cached_preset[32] = {0};
+    static bool checked = false;
+    if (checked) return cached_preset[0] ? cached_preset : NULL;
+    checked = true;
+
+    FILE *f = fopen("/proc/self/cmdline", "rb");
+    if (!f) return NULL;
+
+    char buf[4096];
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    if (n == 0) return NULL;
+    buf[n] = '\0';
+
+    static const char *const valid_presets[] = {
+        "ultrafast", "superfast", "veryfast", "faster", "fast",
+        "medium", "slow", "slower", "veryslow", "placebo", NULL
+    };
+
+    size_t pos = 0;
+    while (pos < n) {
+        const char *arg = buf + pos;
+        size_t len = strlen(arg);
+
+        if ((strcmp(arg, "-preset") == 0 || strcmp(arg, "--preset") == 0) && (pos + len + 1 < n)) {
+            const char *val = buf + pos + len + 1;
+            for (int i = 0; valid_presets[i]; i++) {
+                if (strcmp(val, valid_presets[i]) == 0) {
+                    strncpy(cached_preset, val, sizeof(cached_preset) - 1);
+                    return cached_preset;
+                }
+            }
+        } else if (strncmp(arg, "-preset=", 8) == 0 || strncmp(arg, "--preset=", 9) == 0) {
+            const char *val = strchr(arg, '=') + 1;
+            for (int i = 0; valid_presets[i]; i++) {
+                if (strcmp(val, valid_presets[i]) == 0) {
+                    strncpy(cached_preset, val, sizeof(cached_preset) - 1);
+                    return cached_preset;
+                }
+            }
+        }
+        pos += len + 1;
+    }
+#endif
+    return NULL;
+}
+
 const char *h264_x264_preset_for(const h264_x264_config_t *cfg)
 {
+    /* 1. Environment variable override takes highest priority:
+     * Support BC250_X264_PRESET, BC250_PRESET, and X264_PRESET. */
     const char *env = getenv("BC250_X264_PRESET");
+    if (!env || !*env) env = getenv("BC250_PRESET");
+    if (!env || !*env) env = getenv("X264_PRESET");
     if (env && *env) return env;
 
-    /* Live streaming server (Sunshine, Steam Link, WiVRn): latency is the
+    /* 2. Process command-line argument (-preset <name> / --preset=<name>):
+     * Directly honors FFmpeg/application CLI flags even if the application's
+     * VA-API wrapper internally dropped or ignored the option. */
+    const char *cmd_preset = get_cmdline_preset();
+    if (cmd_preset && *cmd_preset) return cmd_preset;
+
+    /* 3. Live streaming server (Sunshine, Steam Link, WiVRn): latency is the
      * primary constraint. Ultrafast executes in 2-4ms per frame on 4 Zen 2
      * threads, keeping total encode latency well under the 16.6ms 60fps budget.
      * Slower presets (superfast) can still be selected via quality_level <= 2
@@ -41,10 +101,7 @@ const char *h264_x264_preset_for(const h264_x264_config_t *cfg)
         return "ultrafast";
     }
 
-    /* By pixel rate first. On the BC-250 with four threads, veryfast holds
-     * 1080p at 64 fps and superfast at 99, so up to 1080p30 there is room
-     * for veryfast, up to 1080p60 for superfast, and above that only
-     * ultrafast keeps up. */
+    /* 4. By pixel rate first for offline transcodes without explicit preset. */
     const double rate = (double)cfg->width * cfg->height * (cfg->fps ? cfg->fps : 30);
     const double p1080 = 1920.0 * 1080.0;
     int i = rate <= p1080 * 31 ? 2 : (rate <= p1080 * 61 ? 1 : 0);

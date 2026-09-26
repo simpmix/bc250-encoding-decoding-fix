@@ -413,10 +413,10 @@ When playing HEVC/H.265 files (such as *Big Buck Bunny* or MP4/MKV video streams
 ### FFmpeg Logs & Parameter Explanations (from Terminal Output)
 
 1. **`Codec AVOption preset (Encoding preset) has not been used for any stream`**:
-   * **Why it happens**: In FFmpeg, the `-preset` option belongs strictly to software `libx264`. Hardware encoders like `h264_vaapi` do NOT accept `-preset` and FFmpeg's CLI parser ignores the flag.
-   * **How to change presets in VA-API**:
-     * Use FFmpeg's VA-API compression level: `-compression_level <1-7>` (1 = highest quality / slower, 4 = balanced, 7 = fastest).
-     * Or set the driver environment variable directly: `export BC250_X264_PRESET=medium` (or `slow`, `fast`, `faster`, `superfast`, `ultrafast`).
+   * **Why it happens**: In FFmpeg, the `-preset` option belongs to software `libx264`. Hardware encoders like `h264_vaapi` do NOT register `-preset` in their private AVOption table, so FFmpeg's CLI parser prints this warning.
+   * **Direct Command-Line Honor in v0.5.1+**: The BC-250 driver now directly parses `/proc/self/cmdline` for `-preset <val>` and `--preset=<val>`. Even though FFmpeg prints the warning, the BC-250 driver **directly intercepts and applies your chosen preset** (`medium`, `slow`, `faster`, etc.)!
+   * **Environment Variable Support**: You can also set `export BC250_PRESET=medium` (or `export BC250_X264_PRESET=medium` or `export X264_PRESET=medium`).
+   * **VA-API Option**: You can also use `-compression_level <1-7>` (1 = highest quality, 4 = balanced, 7 = fastest).
 
 2. **`[h264_vaapi] No quality level set; using default (20)`**:
    * **Why it happens**: This is a standard informational warning from FFmpeg when no target bitrate (`-b:v`) or QP (`-qp`) is specified on the command line.
