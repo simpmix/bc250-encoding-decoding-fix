@@ -196,6 +196,9 @@ VAStatus bc250_GetConfigAttributes(VADriverContextP ctx, VAProfile profile, VAEn
                  * HEVC uses 1 slice per picture. */
                 attrib_list[i].value = (profile == VAProfileHEVCMain) ? 1 : 16;
                 break;
+#ifdef VAConfigAttribEncQualityLevels
+            case VAConfigAttribEncQualityLevels:
+#endif
             case VAConfigAttribEncQualityRange:
                 /* Quality levels 1..7 (1 = High Quality, 4 = Balanced, 7 = High Speed) */
                 attrib_list[i].value = 7;

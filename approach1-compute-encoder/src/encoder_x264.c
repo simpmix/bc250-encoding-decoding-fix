@@ -54,10 +54,18 @@ static int threads_for(const h264_x264_config_t *cfg)
         int t = atoi(env);
         if (t >= 0 && t <= 64) return t;
     }
+    const char *env_max = getenv("BC250_MAX_CPU_THREADS");
+    if (env_max && *env_max) {
+        int t = atoi(env_max);
+        if (t >= 0 && t <= 64) return t;
+    }
     /* A streaming server shares the machine with the game it streams:
      * four threads, which is where x264 stops scaling usefully with sliced
-     * threads anyway. Everyone else gets x264's own choice. */
-    return cfg->live ? 4 : 0;
+     * threads anyway. For offline transcode, default to 4 threads as well to
+     * prevent pinning all 16 Zen 2 cores at 100% CPU. Unconstrained auto-threads
+     * can still be requested explicitly via BC250_X264_THREADS=0. */
+    (void)cfg;
+    return 4;
 }
 
 static const char *profile_name(int profile_idc)

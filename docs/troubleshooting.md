@@ -393,35 +393,42 @@ When playing HEVC/H.265 files (such as *Big Buck Bunny* or MP4/MKV video streams
 ## 17. Low GPU Usage on `nvtop` / `amdgpu_top` during H.264 Encoding (`backend=x264`)
 
 ### Symptoms
-* During FFmpeg H.264 VA-API encoding (`-c:v h264_vaapi`) or live streaming, `nvtop` or `amdgpu_top` shows minimal/zero GPU load.
+* During FFmpeg H.264 VA-API encoding (`-c:v h264_vaapi`), `nvtop` or `amdgpu_top` shows minimal GPU load while CPU usage is high.
 * Terminal logs output:
   ```text
-  [bc250-h264] Encoder initialized: 1920x1080, profile 100, backend=x264 (CPU libx264; set BC250_H264_BACKEND=compute for GPU)
+  [bc250-x264] 1920x1080 @ 24 fps, veryfast, high profile, threads 4, rc 1 (ICQ)
   ```
-* CPU usage shows 4–6 active worker threads with 5.5x transcoding speeds.
 
 ### Explanation & Backend Architecture
-By default in driver versions built with `libx264`:
-1. **H.264 CPU Offload (`backend=x264`)**: The full H.264 encoding pipeline (motion estimation, transform, quantization, and CABAC/CAVLC entropy coding) is handled by `libx264` using Zen 2 CPU cores. The GPU is only used for downloading the raw NV12 surface. This was adopted because the experimental GPU compute encoder took ~16ms of GPU time per frame (limiting throughput to ~28 fps and starving active games of GPU compute). `libx264` achieves 94–151 fps while leaving the GPU 100% dedicated to 3D rendering.
-2. **GPU Compute Encoder Opt-In (`backend=compute`)**: If you explicitly want the Vulkan compute pipeline with the **Dynamic Hybrid Governor** (GPU Motion Estimation + Zen 2 CPU entropy coding), launch your application with:
+1. **Is the driver having problems using GPU and CPU simultaneously?**:
+   **No.** There is no failure, error, or fallback occurring. In driver builds with `libx264`, the default H.264 pipeline intentionally runs on the 8-core Zen 2 CPU (`backend=x264`). The BC-250 has no hardware VCN encoder, and running the experimental GPU compute encoder consumed ~16ms of GPU time per frame (starving running 3D games of GPU compute and capping throughput at ~28 fps). `libx264` achieves 94–151 fps while leaving the 40 CUs 100% free for gaming.
+2. **GPU Compute Encoder Opt-In (`backend=compute`)**:
+   If you want the **GPU to encode H.264** using Vulkan compute Motion Estimation on the 40 CUs along with the **Dynamic Hybrid Governor** and Zen 2 SIMD entropy coding, simply launch with:
    ```bash
    export BC250_H264_BACKEND=compute
    ```
-3. **HEVC Encoding**: HEVC (`-c:v hevc_vaapi`) **always** runs on the GPU compute engine with Vulkan compute shaders and registers active compute load on `nvtop` / `amdgpu_top`.
+   When `BC250_H264_BACKEND=compute` is active, `amdgpu_top` and `nvtop` will register active GPU compute load.
+3. **HEVC Encoding**:
+   HEVC (`-c:v hevc_vaapi`) **always** runs on the GPU compute engine and registers active compute load on `nvtop` / `amdgpu_top`.
+4. **Why was "veryfast" selected?**:
+   In FFmpeg, the standard `-preset` flag belongs strictly to software `libx264` and is **ignored** by FFmpeg's `h264_vaapi` wrapper. To configure the speed/quality preset in VA-API, you can:
+   * Pass FFmpeg's compression level: `-compression_level <1-7>` (1 = highest quality, 4 = balanced, 7 = fastest).
+   * Or directly set the environment variable: `export BC250_X264_PRESET=medium` (or `slow`, `faster`, `superfast`, `ultrafast`).
+5. **Why was FFmpeg using 100% CPU previously?**:
+   Previously, offline transcoding defaulted to x264 auto-threading (`threads = 0`), which spawned 16+ worker threads across all Zen 2 logical cores and caused cooling fans to spin up. The driver now defaults to **4 worker threads** (`threads 4`) for both live streaming and offline transcoding, capping CPU usage at ~250% and keeping system cooling quiet.
 
 ### Fine-Tuning `libx264` Backend Parameters
-You can configure the CPU encoder behavior through environment variables:
 * **Target CRF Quality**:
   ```bash
   export BC250_X264_CRF=23   # Default is 23 (~5.0 Mbps for 1080p). Lower = higher bitrate/quality.
   ```
 * **Encoding Preset**:
   ```bash
-  export BC250_X264_PRESET=veryfast   # ultrafast, superfast, veryfast, faster
+  export BC250_X264_PRESET=medium   # slow, medium, fast, faster, veryfast, superfast, ultrafast
   ```
 * **Thread Count**:
   ```bash
-  export BC250_X264_THREADS=4        # Default: 4 threads for live streaming (Sunshine, WiVRn, Steam), auto for FFmpeg.
+  export BC250_X264_THREADS=4       # Default is 4 threads. Set to 0 for unconstrained 16-thread saturation.
   ```
 
 ---
