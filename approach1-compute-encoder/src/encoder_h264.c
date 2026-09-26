@@ -1850,15 +1850,18 @@ h264_encoder_t *h264_encoder_create(bc250_gpu_context_t *gpu_ctx,
 #ifdef BC250_HAVE_X264
     {
         const char *be = getenv("BC250_H264_BACKEND");
-        if (!be || strcmp(be, "compute") != 0)
+        if (!be || (strcmp(be, "compute") != 0 && strcmp(be, "hybrid") != 0 && strcmp(be, "gpu") != 0))
             encoder->x264 = h264_x264_create();
     }
     if (encoder->x264) {
-        fprintf(stderr, "[bc250-h264] Encoder initialized: %ux%u, profile %d, backend=x264 (CPU libx264; set BC250_H264_BACKEND=compute for GPU)\n",
+        fprintf(stderr, "[bc250-h264] Encoder initialized: %ux%u, profile %d, backend=x264 (CPU libx264; set BC250_H264_BACKEND=compute for GPU/hybrid)\n",
                 width, height, prof_idc);
         return encoder;
     }
 #endif
+    /* Compute/Hybrid GPU+CPU backend */
+    encoder->governor.enabled = true;
+    encoder->governor.cpu_offload_enabled = true;
     fprintf(stderr, "[bc250-h264] Encoder initialized: %ux%u @ %u fps, %u bps, profile %d, backend=compute, entropy=%s, hybrid_governor=enabled\n",
             width, height, encoder->fps, bitrate, prof_idc, use_cabac ? "CABAC" : "CAVLC");
 

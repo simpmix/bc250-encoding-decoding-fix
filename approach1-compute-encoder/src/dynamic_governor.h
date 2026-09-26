@@ -52,6 +52,7 @@ typedef struct {
     bool enabled;
     int forced_tier;               /* -1: auto, 0..3: forced via BC250_FORCE_TIER */
     bool cpu_offload_enabled;      /* Default: false; enabled via BC250_ENABLE_CPU_ME=1 */
+    bool allow_failover;           /* False for offline transcode to avoid dropping frames */
 } dynamic_governor_t;
 
 /**

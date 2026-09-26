@@ -484,27 +484,30 @@ In Arch Linux, `lib32-x264` is located in the **Arch User Repository (AUR)** rat
 ### Symptoms & Feedback
 * Community tester `oblique99` observed:
   > *"Not much impact on GPU performance but latency is not good. Point being the governor doesn't appear to work. It is behaving like an expensive rate controller for SW encode rather than a hybrid encode."*
+  > *"cpu still giving 100% cpu encode, compute giving 100% gpu encode."*
 
 ### Root Causes
-1. **Default Backend was Pure CPU (`backend=x264`)**:
-   * In driver builds with `libx264`, the default H.264 backend intentionally offloads encoding to the CPU.
+1. **Why "cpu" Mode was Giving 100% CPU Encode (0% GPU)**:
+   * In driver builds with `libx264`, the default H.264 backend intentionally offloads encoding to the CPU (`backend=x264`).
    * Because it runs entirely in software on the Zen 2 CPU cores, GPU usage is near zero, and the Dynamic Hybrid Governor is completely bypassed.
-   * Furthermore, for 1080p60 streams, `backend=x264` previously selected the `"superfast"` preset with multi-second VBV rate control buffering. When a game contends for CPU cores, `superfast` takes 12–18 ms per frame, causing high streaming latency in Sunshine/Moonlight.
-2. **Dynamic Governor Tier 2 CPU Offload was Disabled by Default in Compute Mode**:
-   * When running the experimental GPU compute encoder (`export BC250_H264_BACKEND=compute`), Tier 2 (CPU SIMD Motion Estimation Offload) was guarded by `BC250_ENABLE_CPU_ME=1` and disabled by default.
-   * Governor thresholds were set to 14.0 / 22.0 / 45.0 ms. Because Tier 2 was disabled, the governor remained in Tier 0/1 (100% GPU) until exceeding 45 ms, causing severe frame drops instead of offloading ME to the CPU.
+   * In versions prior to commit `83fbca8`, offline transcoding defaulted to `threads 0`, which engaged all 16 Zen 2 cores at 100% CPU.
+2. **Why "compute" Mode was Giving 100% GPU Encode (0% CPU)**:
+   * In earlier builds, `gov->enabled` was `false` by default for any process other than Sunshine/Steam.
+   * When running FFmpeg or benchmarks with `BC250_H264_BACKEND=compute`, the driver logged `hybrid_governor=enabled` but the governor was actually inactive (`gov->enabled = false`), permanently locking the pipeline into Tier 0 (GPU Full ME with radius 8).
+   * Because Tier 0 ran 2.3 million block searches per frame on the 40 CUs and never transitioned into Tier 2 CPU SIMD offload, GPU compute usage registered at 100% while the CPU remained mostly idle.
 
-### Resolutions Applied
-1. **Low-Latency CPU Streaming Mode (`backend=x264`)**:
-   * For live streaming callers (Sunshine, Steam Link, WiVRn), the default preset is now **`"ultrafast"`** with strict sliced threading and zero lookahead. This drops CPU frame encode latency from ~15 ms down to **2–4 ms**.
-   * Live streaming callers now enforce a **single-frame VBV buffer** (`i_vbv_buffer_size = 1 frame`), preventing buffer bloat and network packet bursts across all rate control modes.
-2. **Real Dynamic Hybrid Governor (`backend=compute`)**:
-   * In `BC250_H264_BACKEND=compute`, Tier 2 (CPU SIMD Motion Estimation Offload) is now **enabled by default** for live streaming callers.
-   * Thresholds are calibrated for 60 fps streaming deadlines (16.6 ms budget):
+### Resolutions Applied in v0.5.1+
+1. **Real Dynamic Hybrid Governor (`backend=compute` or `backend=hybrid`)**:
+   * The Dynamic Hybrid Governor and Tier 2 CPU SIMD offload are now **enabled by default** whenever `BC250_H264_BACKEND=compute` (or `hybrid`) is selected.
+   * For live streaming callers (Sunshine, Steam Link, WiVRn):
      * **Tier 0 (< 7.0 ms)**: Full GPU Motion Estimation (`motion_estimation.comp`).
      * **Tier 1 (7.0 – 10.5 ms)**: Fast GPU Motion Estimation (reduced radius).
      * **Tier 2 (10.5 – 15.5 ms)**: **CPU SIMD Offload**. Motion estimation is shifted to 2 Zen 2 worker threads using SSE2/AVX2 intrinsics (`_mm_sad_epu8`), relieving the 40 GPU CUs so 3D games maintain maximum FPS.
      * **Tier 3 (> 15.5 ms)**: Emergency Failover (emits P_Skip to prevent network packet drops).
-3. **Choosing Your Mode**:
-   * **For Maximum GPU Headroom for Games**: Use default `backend=x264` (now sub-4ms ultrafast).
-   * **For Hybrid Compute Co-Processing**: Run `export BC250_H264_BACKEND=compute`.
+   * For FFmpeg offline transcoding:
+     * Tier 3 frame-dropping is automatically disabled (`allow_failover = false`). Under GPU load, the pipeline automatically engages Tier 2 CPU SIMD offload, splitting motion estimation onto the CPU while the GPU handles DCT/quantization—delivering a true 50/50 hybrid encode without dropping frames.
+2. **Low-Latency CPU Streaming Mode (`backend=x264`)**:
+   * Live streaming callers now automatically use the **`"ultrafast"`** preset with strict sliced threading, zero lookahead, and a **single-frame VBV buffer** (`i_vbv_buffer_size = 1 frame`). This drops frame encode latency from ~15 ms down to **2–4 ms**.
+   * Thread utilization can be customized via `export BC250_THREADS=2` (or `BC250_MAX_CPU_THREADS=2`) to prevent CPU saturation.
+3. **Command-Line Preset Honor**:
+   * Passing `-preset <name>` on the FFmpeg command line is now intercepted and directly applied by the driver, bypassing FFmpeg's internal option filter. Universal environment variable aliases (`BC250_PRESET`, `BC250_X264_PRESET`, `X264_PRESET`) are also supported.

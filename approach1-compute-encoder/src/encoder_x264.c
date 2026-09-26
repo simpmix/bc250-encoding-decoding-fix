@@ -119,6 +119,8 @@ const char *h264_x264_preset_for(const h264_x264_config_t *cfg)
 static int threads_for(const h264_x264_config_t *cfg)
 {
     const char *env = getenv("BC250_X264_THREADS");
+    if (!env || !*env) env = getenv("BC250_THREADS");
+    if (!env || !*env) env = getenv("X264_THREADS");
     if (env && *env) {
         int t = atoi(env);
         if (t >= 0 && t <= 64) return t;

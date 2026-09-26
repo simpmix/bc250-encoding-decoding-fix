@@ -36,6 +36,7 @@ void dynamic_governor_init(dynamic_governor_t *gov)
     gov->enabled = false;
     gov->forced_tier = -1;
     gov->cpu_offload_enabled = false;
+    gov->allow_failover = true;
 
 #if defined(__linux__)
     if (program_invocation_short_name &&
@@ -60,6 +61,12 @@ void dynamic_governor_init(dynamic_governor_t *gov)
         gov->tier1_threshold_ms = 7.0;
         gov->tier2_threshold_ms = 10.5;
         gov->tier3_threshold_ms = 15.5;
+    }
+    if (program_invocation_short_name && strcmp(program_invocation_short_name, "ffmpeg") == 0) {
+        /* For FFmpeg transcoding in compute/hybrid mode, enable CPU ME offload
+         * but disable Tier 3 P_Skip failover so no video frames are dropped. */
+        gov->allow_failover = false;
+        gov->cpu_offload_enabled = true;
     }
 #endif
 
@@ -150,7 +157,11 @@ governor_tier_t dynamic_governor_update(dynamic_governor_t *gov, double gpu_late
 
     /* Emergency spike trip-wire: single frame over threshold triggers failover */
     if (gpu_latency_ms >= gov->tier3_threshold_ms) {
-        gov->current_tier = GOV_TIER_3_FAILOVER;
+        if (gov->allow_failover) {
+            gov->current_tier = GOV_TIER_3_FAILOVER;
+        } else {
+            gov->current_tier = gov->cpu_offload_enabled ? GOV_TIER_2_CPU_OFFLOAD : GOV_TIER_1_GPU_FAST;
+        }
         gov->stable_frames_count = 0;
     } else if (gov->current_tier == GOV_TIER_3_FAILOVER) {
         /* Drop from Tier 3 immediately after the emergency frame */
