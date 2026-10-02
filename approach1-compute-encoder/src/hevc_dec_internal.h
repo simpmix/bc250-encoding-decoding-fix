@@ -42,8 +42,9 @@ enum { HEVCD_INTRA_PLANAR = 0, HEVCD_INTRA_DC = 1,
 /* Coefficient scan orders, 6.5.3. */
 enum { HEVCD_SCAN_DIAG = 0, HEVCD_SCAN_HORIZ = 1, HEVCD_SCAN_VERT = 2 };
 
-/* Threads kept for the life of a decoder. See hevc_wpp.c. */
-typedef struct hevcd_pool hevcd_pool_t;
+/* Threads kept for the life of a decoder. See worker_pool.h. */
+#include "worker_pool.h"
+typedef worker_pool_t hevcd_pool_t;
 
 /* One picture's worth of decoding state. */
 /* Which reference lists a prediction unit uses. */
@@ -361,9 +362,18 @@ hevcd_pool_t *hevcd_pool_for(hevcd_t *d);
  * accept NULL, for a picture nobody decodes. */
 void hevcd_rows_ready(hevcd_img_t *g, int rows);
 void hevcd_await_rows(const hevcd_img_t *g, int rows);
-int hevcd_pool_helpers(const hevcd_pool_t *p, int n);
-void hevcd_pool_run(hevcd_pool_t *p, void *(*fn)(void *), void *arg, int n);
-void hevcd_pool_destroy(hevcd_pool_t *p);
+static inline int hevcd_pool_helpers(const hevcd_pool_t *p, int n)
+{
+    return worker_pool_helpers(p, n);
+}
+static inline void hevcd_pool_run(hevcd_pool_t *p, void *(*fn)(void *), void *arg, int n)
+{
+    worker_pool_run(p, fn, arg, n);
+}
+static inline void hevcd_pool_destroy(hevcd_pool_t *p)
+{
+    worker_pool_destroy(p);
+}
 void hevcd_free_filters(hevcd_t *d);
 
 /* 8.5.3.2: what motion one prediction unit ended up with, and 8.5.3.3:

@@ -359,116 +359,11 @@ void hevcd_await_rows(const hevcd_img_t *g, int rows)
 
 /* ------------------------------------------------------------ the pool
  *
- * ⚠️ One per decoder, not one per process. The driver is a library libva
- * loads and unloads, and threads left running in a library that has been
- * unloaded take the process down the next time they wake. A decoder's
- * threads are joined when the decoder is destroyed.
- *
- * Why at all: the wavefront made fifteen threads and joined them again for
- * every picture, and so did the loop filters and the copy into the
- * surface. On a BC-250 fifteen creates and joins cost a quarter of a
- * millisecond, and a thread new to the processor starts with nothing in
- * its caches. */
-struct hevcd_pool {
-    pthread_mutex_t m;
-    pthread_cond_t go, finished;
-    void *(*fn)(void *);
-    void *arg;
-    unsigned generation;            /* one more for every job */
-    int want, taken, running;       /* of the current job's helpers */
-    bool quit;
-    int n;
-    pthread_t thread[MAX_THREAD];
-};
-
-static void *pool_worker(void *arg)
-{
-    hevcd_pool_t *p = arg;
-    unsigned seen = 0;
-    pthread_mutex_lock(&p->m);
-    for (;;) {
-        while (!p->quit && p->generation == seen)
-            pthread_cond_wait(&p->go, &p->m);
-        if (p->quit) break;
-        seen = p->generation;
-        /* A job wants a certain number of helpers; the rest of the pool
-         * goes back to sleep. */
-        if (p->taken >= p->want) continue;
-        p->taken++;
-        void *(*fn)(void *) = p->fn;
-        void *a = p->arg;
-        pthread_mutex_unlock(&p->m);
-        fn(a);
-        pthread_mutex_lock(&p->m);
-        if (--p->running == 0) pthread_cond_signal(&p->finished);
-    }
-    pthread_mutex_unlock(&p->m);
-    return NULL;
-}
-
+ * One per decoder - see worker_pool.h for why never one per process. */
 hevcd_pool_t *hevcd_pool_for(hevcd_t *d)
 {
-    if (d->pool) return d->pool;
-    int n = (int)sysconf(_SC_NPROCESSORS_ONLN);
-    if (n > MAX_THREAD) n = MAX_THREAD;
-    if (n < 2) return NULL;
-
-    hevcd_pool_t *p = calloc(1, sizeof *p);
-    if (!p) return NULL;
-    pthread_mutex_init(&p->m, NULL);
-    pthread_cond_init(&p->go, NULL);
-    pthread_cond_init(&p->finished, NULL);
-    for (int i = 0; i < n - 1; i++)
-        if (pthread_create(&p->thread[p->n], NULL, pool_worker, p) == 0)
-            p->n++;
-    if (!p->n) {
-        hevcd_pool_destroy(p);
-        return NULL;
-    }
-    d->pool = p;
-    return p;
-}
-
-int hevcd_pool_helpers(const hevcd_pool_t *p, int n)
-{
-    const int h = n - 1;
-    return h < 0 ? 0 : (h > p->n ? p->n : h);
-}
-
-void hevcd_pool_run(hevcd_pool_t *p, void *(*fn)(void *), void *arg, int n)
-{
-    const int helpers = hevcd_pool_helpers(p, n);
-    if (helpers) {
-        pthread_mutex_lock(&p->m);
-        p->fn = fn;
-        p->arg = arg;
-        p->want = helpers;
-        p->taken = 0;
-        p->running = helpers;
-        p->generation++;
-        pthread_cond_broadcast(&p->go);
-        pthread_mutex_unlock(&p->m);
-    }
-    fn(arg);                        /* this thread works too */
-    if (helpers) {
-        pthread_mutex_lock(&p->m);
-        while (p->running > 0) pthread_cond_wait(&p->finished, &p->m);
-        pthread_mutex_unlock(&p->m);
-    }
-}
-
-void hevcd_pool_destroy(hevcd_pool_t *p)
-{
-    if (!p) return;
-    pthread_mutex_lock(&p->m);
-    p->quit = true;
-    pthread_cond_broadcast(&p->go);
-    pthread_mutex_unlock(&p->m);
-    for (int i = 0; i < p->n; i++) pthread_join(p->thread[i], NULL);
-    pthread_mutex_destroy(&p->m);
-    pthread_cond_destroy(&p->go);
-    pthread_cond_destroy(&p->finished);
-    free(p);
+    if (!d->pool) d->pool = worker_pool_create((int)sysconf(_SC_NPROCESSORS_ONLN));
+    return d->pool;
 }
 
 /* How many rows to run at once. One per processor is plenty: the rows are

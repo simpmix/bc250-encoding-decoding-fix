@@ -23,6 +23,7 @@ gcc -O2 -g -Wall -Wextra -std=gnu11 \
     "$D/src/hevc_filter.c" \
     "$D/src/decoder_h265.c" \
     "$D/src/hevc_wpp.c" \
+    "$D/src/worker_pool.c" \
     "$D/src/hevc_mv.c" \
     "$D/src/hevc_mc.c" \
     "$D/src/hevc_tiles.c" \

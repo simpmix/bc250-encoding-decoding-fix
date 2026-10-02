@@ -8,6 +8,7 @@
 #ifndef GPU_COMPUTE_H
 #define GPU_COMPUTE_H
 
+#include <stdatomic.h>
 #include <vulkan/vulkan.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -341,6 +342,13 @@ typedef struct bc250_gpu_context {
      * timeline semaphore this context also owns is created but never
      * signalled, so it cannot be used for that. */
     uint32_t frames_submitted;
+
+    /* Threads for reading a surface back (gpu_compute_download_nv12()),
+     * made the first time one is read and joined in bc250_gpu_destroy().
+     * copy_busy keeps a second read-back, from another thread, off them
+     * while one is running: that one copies on its own thread. */
+    struct worker_pool *copy_pool;
+    atomic_int copy_busy;
 } bc250_gpu_context_t;
 
 typedef bc250_gpu_context_t gpu_context_t;

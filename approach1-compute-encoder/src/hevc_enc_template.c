@@ -216,7 +216,7 @@ static inline uint32_t FUNC(compute_sad_4x4_chroma)(const pixel *src_cb,
  * as int16 (in the int32 buffer, half of it used), and only the vertical
  * filter over it, for the corner phase, needs 32 bits, which PMADDWD gives
  * two rows at a time. */
-static void FUNC(build_hpel)(hevc_encoder_t *enc)
+static void FUNC(hpel_pass)(hevc_encoder_t *enc, int pass, int r_begin, int r_end)
 {
     const int w = (int)enc->coded_width, h = (int)enc->coded_height;
     const int M = HPEL_MARGIN, ps = enc->hpel_stride;
@@ -229,10 +229,8 @@ static void FUNC(build_hpel)(hevc_encoder_t *enc)
 
     /* Pass 1: every source row, edge-extended, through the horizontal
      * filter; and the whole-sample plane, which is the same row. */
-#ifdef _OPENMP
-#pragma omp parallel for schedule(static)
-#endif
-    for (int r = 0; r < rows + 7; r++) {
+    if (pass == 1)
+    for (int r = r_begin; r < r_end; r++) {
         int sy = r - M - 3;
         sy = sy < 0 ? 0 : (sy >= h ? h - 1 : sy);
         const pixel *row = ref + (size_t)sy * w;
@@ -260,10 +258,8 @@ static void FUNC(build_hpel)(hevc_encoder_t *enc)
     }
 
     /* Pass 2: right half, lower half, both. */
-#ifdef _OPENMP
-#pragma omp parallel for schedule(static)
-#endif
-    for (int r = 0; r < rows; r++) {
+    if (pass == 2)
+    for (int r = r_begin; r < r_end; r++) {
         const int16_t *t8 = T + (size_t)r * ps;
         pixel *Hr = H + (size_t)r * ps, *Vr = V + (size_t)r * ps, *HVr = HV + (size_t)r * ps;
         const pixel *e[8];
@@ -313,7 +309,7 @@ static void FUNC(build_hpel)(hevc_encoder_t *enc)
     }
 }
 #else
-static void FUNC(build_hpel)(hevc_encoder_t *enc)
+static void FUNC(hpel_pass)(hevc_encoder_t *enc, int pass, int r_begin, int r_end)
 {
     const int w = (int)enc->coded_width, h = (int)enc->coded_height;
     const int M = HPEL_MARGIN, ps = enc->hpel_stride;
@@ -332,10 +328,8 @@ static void FUNC(build_hpel)(hevc_encoder_t *enc)
     /* Pass 1: every source row, edge-extended by M + 4 samples on each side,
      * then the horizontal filter over it - one clean loop the compiler can
      * vectorize, instead of a clamp per tap. */
-#ifdef _OPENMP
-#pragma omp parallel for schedule(static)
-#endif
-    for (int r = 0; r < rows + 7; r++) {
+    if (pass == 1)
+    for (int r = r_begin; r < r_end; r++) {
         const pixel *row = ref + (size_t)CLAMPY(r - M - 3) * w;
         pixel ext[w + 2 * M + 8];
         for (int i = 0; i < M + 3; i++) ext[i] = row[0];
@@ -350,10 +344,8 @@ static void FUNC(build_hpel)(hevc_encoder_t *enc)
     }
 
     /* Pass 2: right half, lower half, both. */
-#ifdef _OPENMP
-#pragma omp parallel for schedule(static)
-#endif
-    for (int r = 0; r < rows; r++) {
+    if (pass == 2)
+    for (int r = r_begin; r < r_end; r++) {
         const int32_t *t8 = T + (size_t)r * ps;   /* row r of T is picture row r - M - 3 */
         pixel *Hr = H + (size_t)r * ps;
         pixel *Vr = V + (size_t)r * ps, *HVr = HV + (size_t)r * ps;
@@ -381,6 +373,28 @@ static void FUNC(build_hpel)(hevc_encoder_t *enc)
 #undef CLAMPY
 }
 #endif
+
+/* The two passes over the encoder's pool, the second once the first is
+ * done: it reads rows of the first's output on either side of its own. */
+typedef struct {
+    hevc_encoder_t *enc;
+    int pass;
+} FUNC(hpel_job_t);
+
+static void FUNC(hpel_rows)(void *arg, int begin, int end)
+{
+    const FUNC(hpel_job_t) *j = arg;
+    FUNC(hpel_pass)(j->enc, j->pass, begin, end);
+}
+
+static void FUNC(build_hpel)(hevc_encoder_t *enc)
+{
+    const int rows = (int)enc->coded_height + 2 * HPEL_MARGIN;
+    FUNC(hpel_job_t) j = { enc, 1 };
+    worker_pool_for(enc->pool, rows + 7, 16, FUNC(hpel_rows), &j, enc->threads);
+    j.pass = 2;
+    worker_pool_for(enc->pool, rows, 16, FUNC(hpel_rows), &j, enc->threads);
+}
 
 /* 8x8 SAD between the source and a block of a half plane, and between the
  * source and the average of two such blocks - both in the plane's own
@@ -901,6 +915,7 @@ static void FUNC(inter_residual)(const hevc_encoder_t *enc, int cu_x, int cu_y,
         FUNC(inter_residual_luma)(enc, cu_x, cu_y, py, 1, &r8);
         only8 = !r8.cbf_y8;
     }
+    if (enc->tu8 && !enc->inter_tu4) only8 = 1;
     if (!only8) FUNC(inter_residual_luma)(enc, cu_x, cu_y, py, 0, r);
     if (enc->tu8) {
         if (only8 || r8.dist_y * 256 + enc->lambda_sse_q8 * r8.bits_y < r->dist_y * 256 + enc->lambda_sse_q8 * r->bits_y) {
@@ -1005,7 +1020,7 @@ static hevc_mv_t FUNC(motion_search)(const hevc_encoder_t *enc, int cu_x, int cu
 
     /* Half, then quarter samples around the best so far. */
     hevc_mv_t m = { (int16_t)(bx * 4), (int16_t)(by * 4) };
-    for (int s = 2; s >= 1; s >>= 1) {
+    for (int s = 2; s >= (enc->qpel ? 1 : 2); s >>= 1) {
         const hevc_mv_t c0 = m;
         for (int k = 0; k < 8; k++) {
             static const int ox[8] = { -1, 0, 1, -1, 1, -1, 0, 1 };
@@ -1175,6 +1190,21 @@ static int64_t FUNC(pred_dist)(const hevc_encoder_t *enc, int cu_x, int cu_y,
          + FUNC(sse)((const pixel *)enc->src_cr + co, ccw, pcr, 4, 4, 4);
 }
 
+/* The live preset's count of a candidate's bits: those of its
+ * coefficients, roughly (coeff_bits()), and a fixed guess at its own syntax
+ * - the skip flag and merge index, the merge flag and the residual's flags,
+ * the vector difference, four intra modes. Where the CABAC count follows
+ * the contexts, this does not; it costs 0.7% of bits for 12% of the time. */
+static inline int FUNC(rough_mode_bits)(int kind, int merge_idx, const hevc_mv_t *mvd)
+{
+    switch (kind) {
+    case CU_SKIP:  return 2 + merge_idx;
+    case CU_MERGE: return 6 + merge_idx;
+    case CU_AMVP:  return 7 + mvd_bits(mvd->x) + mvd_bits(mvd->y);
+    default:       return 18;
+    }
+}
+
 /* Decide one 8x8 CU of a P picture by rate and distortion, and reconstruct
  * it into the frame; the syntax is left for emit_cu(). Every candidate's
  * bits are counted by running its syntax through `chain`, which then moves
@@ -1223,7 +1253,13 @@ static void FUNC(decide_cu)(hevc_encoder_t *enc, hevc_cabac_t *chain, int cu_x, 
         const int64_t dj_ = (int64_t)(dist_) * 256;                                \
         if (dj_ + enc->lambda_sse_q8 * (int64_t)(rb_) >= best_j) break;            \
         cd.kind = (kind_);                                                         \
-        const int64_t j_ = FUNC(rd_cost)(enc, chain, cu_x, cu_y, y_min, &cd, (dist_), &after); \
+        int64_t j_;                                                                \
+        if (enc->rough_rd) {                                                       \
+            j_ = dj_ + enc->lambda_sse_q8                                          \
+                 * (int64_t)((rb_) + FUNC(rough_mode_bits)((kind_), cd.merge_idx, &cd.mvd)); \
+            after = *chain;                                                        \
+        } else                                                                     \
+            j_ = FUNC(rd_cost)(enc, chain, cu_x, cu_y, y_min, &cd, (dist_), &after); \
         if (j_ < best_j) { best_j = j_; *d = cd; d->j = j_; best_after = after; best_mv = (mv_); } \
     } while (0)
 
@@ -1260,14 +1296,6 @@ static void FUNC(decide_cu)(hevc_encoder_t *enc, hevc_cabac_t *chain, int cu_x, 
     starts[n_starts++] = mvp[1];
     for (int i = 0; i < 5; i++) starts[n_starts++] = cand[i];
     starts[n_starts].x = 0; starts[n_starts].y = 0; n_starts++;
-    {
-        const uint32_t ctu = ((uint32_t)cuy / 2) * enc->width_ctu + ((uint32_t)cux / 2);
-        if (enc->num_gpu_mvs > 0 && ctu < enc->num_gpu_mvs) {
-            starts[n_starts].x = (int16_t)enc->gpu_mvs[ctu].mvx;
-            starts[n_starts].y = (int16_t)enc->gpu_mvs[ctu].mvy;
-            n_starts++;
-        }
-    }
     int mvp_idx = 0;
     int64_t me_cost;
     uint32_t me_sad;
@@ -1308,7 +1336,7 @@ static void FUNC(decide_cu)(hevc_encoder_t *enc, hevc_cabac_t *chain, int cu_x, 
      * here wins on this CU's bits alone and leaves no motion for the next
      * CUs and pictures to merge with: not trying it saved 4.6% of the time
      * on the BC-250 and 0.5% of bits (park_joy 1.9%). */
-    if (d->kind == CU_SKIP || !FUNC(inter_any_cbf)(&d->res)) goto decided;
+    if (d->kind == CU_SKIP || !FUNC(inter_any_cbf)(&d->res) || !enc->intra_in_p) goto decided;
     FUNC(intra_trial)(enc, cu_x, cu_y, y_min, &cd.intra);
     const int64_t dist_intra =
           FUNC(sse)(src, cw, (const pixel *)enc->recon_y + (size_t)cu_y * cw + cu_x, cw, 8, 8)

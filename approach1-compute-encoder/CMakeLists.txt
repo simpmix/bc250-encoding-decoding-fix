@@ -210,6 +210,7 @@ set(SOURCES
     src/hevc_mc.c
     src/hevc_tiles.c
     src/hevc_wpp.c
+    src/worker_pool.c
     src/hevc_dec_tables.c
     src/h264_mb_cabac.c
     src/h264_mb_cavlc.c

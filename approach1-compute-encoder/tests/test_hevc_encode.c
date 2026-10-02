@@ -292,18 +292,11 @@ static void test_dynamic_qp_and_rate_control(void) {
     printf("[test_hevc_encode] Dynamic QP and rate control OK.\n");
 }
 
-/* ⚠️ What this can and cannot check.
- *
- * The governor only moves when there is a GPU to measure, and this suite
- * runs without one on purpose. So all that is provable here is that an
- * encoder with no GPU stays at tier 0 and encodes normally - which is
- * worth checking, because it is the path a caller with no Vulkan context
- * takes, but it is NOT a check that the governor is wired up.
- *
- * It used to be named as though it were, and it passed for the whole
- * time nothing called dynamic_governor_update() from this encoder. The
- * real check is on the board: encode with BC250_GOVERNOR_STATS set and
- * look for [bc250-gov] lines, which only that function prints. */
+/* The encoder gives the GPU no work - the motion search it used to run
+ * there was waited for on every P picture and its vectors changed nothing
+ * - so there is no governor behind hevc_encoder_get_governor_tier(), and
+ * the tier is the first one with or without a GPU. What is left to check
+ * is that an encoder with no GPU encodes and reports that tier. */
 static void test_hevc_governor(void) {
     printf("[test_hevc_encode] Testing the governor's GPU-free path...\n");
     uint32_t width = 64, height = 64;
