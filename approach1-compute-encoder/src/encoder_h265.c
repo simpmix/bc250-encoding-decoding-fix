@@ -1251,6 +1251,13 @@ static void wpp_wait(hevc_encoder_t *e, int row, int need)
         if (atomic_load_explicit(p, memory_order_acquire) >= need) return;
         _mm_pause();
     }
+    const char *sync_mode = getenv("BC250_HEVC_SYNC");
+    if (sync_mode && strcmp(sync_mode, "spin") == 0) {
+        while (atomic_load_explicit(p, memory_order_acquire) < need) {
+            _mm_pause();
+        }
+        return;
+    }
     atomic_fetch_add(&e->row_waiters[row], 1);
     int v;
     while ((v = atomic_load(p)) < need)

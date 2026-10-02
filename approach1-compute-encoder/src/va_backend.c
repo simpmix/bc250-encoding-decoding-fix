@@ -128,8 +128,9 @@ static bc250_driver_data* get_driver_data(VADriverContextP ctx) {
 VAStatus bc250_QueryConfigProfiles(VADriverContextP ctx, VAProfile *profile_list, int *num_profiles) {
     if (!ctx || !num_profiles) return VA_STATUS_ERROR_INVALID_PARAMETER;
 
+    const int exp_profiles = getenv("BC250_EXPERIMENTAL_PROFILES") != NULL;
     if (!profile_list) {
-        *num_profiles = 5;
+        *num_profiles = exp_profiles ? 9 : 7;
         return VA_STATUS_SUCCESS;
     }
 
@@ -148,9 +149,11 @@ VAStatus bc250_QueryConfigProfiles(VADriverContextP ctx, VAProfile *profile_list
     profile_list[i++] = VAProfileHEVCMain;
     /* Decoded, and encoded from P010 surfaces. */
     profile_list[i++] = VAProfileHEVCMain10;
-    /* Web browser decoding acceleration profiles (Chromium / Firefox / MPV) */
-    profile_list[i++] = VAProfileVP9Profile0;
-    profile_list[i++] = VAProfileAV1Profile0;
+    if (exp_profiles) {
+        /* Web browser decoding acceleration profiles (Chromium / Firefox / MPV) */
+        profile_list[i++] = VAProfileVP9Profile0;
+        profile_list[i++] = VAProfileAV1Profile0;
+    }
     /* Post-processing hangs off no codec at all. */
     profile_list[i++] = VAProfileNone;
 
@@ -160,6 +163,8 @@ VAStatus bc250_QueryConfigProfiles(VADriverContextP ctx, VAProfile *profile_list
 
 VAStatus bc250_QueryConfigEntrypoints(VADriverContextP ctx, VAProfile profile, VAEntrypoint *entrypoint_list, int *num_entrypoints) {
     if (!ctx || !num_entrypoints) return VA_STATUS_ERROR_INVALID_PARAMETER;
+
+    const int exp_profiles = getenv("BC250_EXPERIMENTAL_PROFILES") != NULL;
 
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic push
@@ -171,8 +176,7 @@ VAStatus bc250_QueryConfigEntrypoints(VADriverContextP ctx, VAProfile profile, V
                                 profile == VAProfileH264High ||
                                 profile == VAProfileHEVCMain ||
                                 profile == VAProfileHEVCMain10 ||
-                                profile == VAProfileVP9Profile0 ||
-                                profile == VAProfileAV1Profile0 ||
+                                (exp_profiles && (profile == VAProfileVP9Profile0 || profile == VAProfileAV1Profile0)) ||
                                 profile == VAProfileNone);
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
@@ -201,9 +205,9 @@ VAStatus bc250_QueryConfigEntrypoints(VADriverContextP ctx, VAProfile profile, V
                             profile == VAProfileH264High ||
                             profile == VAProfileHEVCMain ||
                             profile == VAProfileHEVCMain10 ||
-                            profile == VAProfileVP9Profile0 ||
-                            profile == VAProfileAV1Profile0);
-    const int can_encode = (profile != VAProfileVP9Profile0 && profile != VAProfileAV1Profile0);
+                            (exp_profiles && (profile == VAProfileVP9Profile0 || profile == VAProfileAV1Profile0)));
+    const int can_encode = (profile != VAProfileNone &&
+                            (!exp_profiles || (profile != VAProfileVP9Profile0 && profile != VAProfileAV1Profile0)));
     const int count = (can_decode ? 1 : 0) + (can_encode ? 1 : 0);
 
     if (!entrypoint_list) {
@@ -546,8 +550,15 @@ VAStatus bc250_CreateSurfaces2(VADriverContextP ctx, unsigned int format, unsign
         }
     }
 
-    /* Attempt hardware zero-copy DMA-BUF memory import if an external buffer descriptor is supplied. */
-    if (ext_bufs && ext_bufs->buffers && ext_bufs->num_buffers >= num_surfaces) {
+    /* By default, return VA_STATUS_ERROR_UNSUPPORTED_MEMORY_TYPE when external
+     * descriptors are passed. This commanding return is REQUIRED for Gamescope,
+     * Steam Link, and Sunshine to seamlessly route frame composition through their
+     * validated EGL blit path without solid green or black screens.
+     * Hardware zero-copy DMA-BUF importation is experimental and guarded behind
+     * BC250_ENABLE_DMABUF_IMPORT=1. */
+    const char *dmabuf_optin = getenv("BC250_ENABLE_DMABUF_IMPORT");
+    if (ext_bufs && ext_bufs->buffers && ext_bufs->num_buffers >= num_surfaces &&
+        dmabuf_optin && strcmp(dmabuf_optin, "1") == 0) {
         bc250_driver_data *data = get_driver_data(ctx);
         if (!data) return VA_STATUS_ERROR_INVALID_CONTEXT;
         DRIVER_LOCK(data);
@@ -594,10 +605,7 @@ VAStatus bc250_CreateSurfaces2(VADriverContextP ctx, unsigned int format, unsign
         return VA_STATUS_SUCCESS;
     }
 
-    if (mem_type != VA_SURFACE_ATTRIB_MEM_TYPE_VA && mem_type != 0) {
-        return VA_STATUS_ERROR_UNSUPPORTED_MEMORY_TYPE;
-    }
-    if (ext_bufs) {
+    if (ext_bufs || (mem_type != VA_SURFACE_ATTRIB_MEM_TYPE_VA && mem_type != 0)) {
         return VA_STATUS_ERROR_UNSUPPORTED_MEMORY_TYPE;
     }
 
@@ -835,16 +843,16 @@ VAStatus bc250_CreateContext(VADriverContextP ctx, VAConfigID config_id, int pic
                 if (prof == VAProfileHEVCMain || prof == VAProfileHEVCMain10) {
                     c->h265_dec = hevc_decoder_create(&data->gpu, picture_width,
                                                       picture_height);
-                } else if (prof == VAProfileVP9Profile0 || prof == VAProfileAV1Profile0) {
-                    /* Not implemented in CPU software decoder; reject context creation
-                     * so Chromium/Firefox/mpv fall back to built-in libvpx/dav1d
-                     * instead of producing blank/frozen frames. */
+                } else if (prof == VAProfileH264ConstrainedBaseline ||
+                           prof == VAProfileH264Baseline ||
+                           prof == VAProfileH264Main ||
+                           prof == VAProfileH264High) {
+                    c->h264_dec = h264_decoder_create(&data->gpu, picture_width,
+                                                      picture_height);
+                } else {
                     memset(c, 0, sizeof(*c));
                     DRIVER_UNLOCK(data);
                     return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
-                } else {
-                    c->h264_dec = h264_decoder_create(&data->gpu, picture_width,
-                                                      picture_height);
                 }
             }
 

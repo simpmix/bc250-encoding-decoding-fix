@@ -36,19 +36,18 @@ Release **v0.5.2** is a monumental feature and performance milestone for the **A
 * **Low Latency & Live Streaming Tuning**: Automatically applies `tune="zerolatency"` (`bFrameAdaptive=0`, `bframes=0`, `lookaheadDepth=0`) for live streaming callers (`sunshine`, `steam`, `gamescope`), maintaining sub-4ms encode latency.
 * **Command-Line & Environment Overrides**: Honors command-line `-preset` flags directly from `/proc/self/cmdline`, as well as `BC250_X265_PRESET` and `BC250_X265_THREADS` overrides.
 
-#### 6. Native Hardware Zero-Copy DMA-BUF Ingestion
-* **Vulkan External Memory Importation**: Implemented `gpu_compute_import_dmabuf_image()` utilizing `VK_EXT_external_memory_dma_buf` and `VkImportMemoryFdInfoKHR`. Binds DRM prime file descriptors directly into Vulkan image memory without copying frame buffers through host RAM.
-* **Zero-Copy Gamescope & Sunshine Ingestion**: Directly ingests composited game frames exported by Gamescope and Sunshine, eliminating PCIe bandwidth contention and GART aperture bottlenecks.
-* **Safe Fallback Protocol**: If the imported buffer utilizes an unsupported tiling modifier or memory type, `bc250_CreateSurfaces2()` cleanly returns `VA_STATUS_ERROR_UNSUPPORTED_MEMORY_TYPE`, directing Sunshine and Gamescope to seamlessly route frames through their validated EGL blit path without crashing.
+#### 6. Native Hardware Zero-Copy DMA-BUF Ingestion (Opt-in via `BC250_ENABLE_DMABUF_IMPORT=1`)
+* **Preserving Rock-Solid EGL Baseline by Default**: By default, `bc250_CreateSurfaces2()` returns `VA_STATUS_ERROR_UNSUPPORTED_MEMORY_TYPE` when external buffer descriptors are passed. This commanding return is strictly required for Sunshine, Gamescope, and Steam Link to seamlessly route frame composition through their battle-tested EGL blit path without solid green or black screens on AMD RDNA tiled memory.
+* **Experimental Hardware Direct Import**: For developers testing direct DMA-BUF ingestion without CPU blitting, setting `BC250_ENABLE_DMABUF_IMPORT=1` activates `gpu_compute_import_dmabuf_image()` using `VK_EXT_external_memory_dma_buf` and `VkImportMemoryFdInfoKHR`.
 
 #### 7. Dynamic Real-Time Network Bitrate Smoothing & x265 Reconfiguration
 * **Jitter-Free Bitrate Scaling**: Implemented `rc_update_bitrate()` in the rate control subsystem. When Sunshine, Moonlight, or Steam Link dynamically adapt their target bitrate due to network congestion or Wi-Fi fluctuations, the driver proportionally scales buffer fullness and recomputes target frame budgets.
 * **x265 Mid-Stream Rate Reconfiguration**: Added `x265_encoder_reconfig()` support to `encoder_x265.c`, applying runtime bitrate and QP updates immediately without dropping GOP cadence or reopening the encoder.
 * **Elimination of Mid-Session QP Jumps**: Replaced disruptive rate control resets with continuous, smooth QP scaling, preventing packet spikes and momentary encoder stutter during runtime bitrate adjustments.
 
-#### 8. Web Browser Hardware Decode Entrypoints (VP9 & AV1)
-* **Chromium & Firefox Acceleration Hook**: Added `VAProfileVP9Profile0` and `VAProfileAV1Profile0` with `VAEntrypointVLD` to `bc250_QueryConfigProfiles()` and `bc250_QueryConfigEntrypoints()`.
-* **Safe Software Fallback**: `bc250_CreateContext()` cleanly returns `VA_STATUS_ERROR_UNSUPPORTED_PROFILE` for VP9 and AV1, allowing Chromium, Firefox, and Electron apps to detect VA-API capability while seamlessly delegating VP9/AV1 decoding to built-in multithreaded `libvpx` and `dav1d` decoders, preventing blank or frozen video frames.
+#### 8. Web Browser Hardware Decode Entrypoints (Opt-in via `BC250_EXPERIMENTAL_PROFILES=1`)
+* **Strict Browser Stability by Default**: To prevent Chromium, Firefox, and Electron apps from failing during video playback, VP9 and AV1 decode profiles are hidden by default, ensuring browsers cleanly and automatically delegate VP9/AV1 decoding to built-in multithreaded `dav1d` and `libvpx` without video errors or freezing.
+* **Developer Hooks**: Developers prototyping compute-shader decoders can enable experimental profile advertising via `BC250_EXPERIMENTAL_PROFILES=1`.
 
 #### 9. HDR10 to SDR Tone-Mapping in Post-Processing (`VAEntrypointVideoProc`)
 * **Vulkan Compute Tone-Mapper**: Created `video_proc_tonemap.comp` compute shader and integrated `vpp_pipeline_tonemap` into `VAEntrypointVideoProc`.
