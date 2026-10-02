@@ -424,6 +424,7 @@ uint32_t rc_get_quality_level(const rate_control_t *rc) {
 #define RC_MODEL_MAX_STEP 2    /* QP change from one P picture to the next */
 #define RC_MODEL_I_BOOST 2     /* I pictures this much finer: everything after predicts from them */
 #define RC_MODEL_I_OVER_P 4.0  /* I against P bits at one QP, until a P picture has been seen */
+#define RC_MODEL_STILL_RANGE 6 /* how much finer than the moving pictures a still one may go */
 
 static double rc_model_qp_exact(double cplx, double bits)
 {
@@ -455,12 +456,27 @@ static double rc_model_horizon(const rate_control_t *rc)
     return h < 2.0 ? 2.0 : h;
 }
 
-int rc_model_frame_qp(rate_control_t *rc, int intra)
+int rc_model_frame_qp(rate_control_t *rc, int intra, int still)
 {
     if (!rc) return 26;
     if (rc->mode == RC_CQP) return rc->current_qp;
 
-    const double bpf = (double)rc->target_bitrate / rc->framerate;
+    /* A moving P picture also gets the shares of the still ones among
+     * them, up to twice its own: a 30 fps game in a 60 fps stream gets the
+     * whole bitrate on the pictures that move. No more than twice, so that
+     * the first picture after a long still stretch costs two shares, not
+     * ten. A still picture gets what is left - nothing while half the
+     * pictures or fewer are still, and refining them on top put CBR 7-8%
+     * over its bitrate. */
+    const double share_pic = (double)rc->target_bitrate / rc->framerate;
+    const double s = rc->still_share, s_moving = s < 0.5 ? s : 0.5;
+    double bpf = share_pic;
+    if (!intra && !still) {
+        bpf = share_pic / (1.0 - s_moving);
+    } else if (!intra && s > 0.0) {
+        bpf = (share_pic - (1.0 - s) * share_pic / (1.0 - s_moving)) / s;
+        if (bpf < share_pic / 64.0) bpf = share_pic / 64.0;
+    }
     double want = bpf - rc->debt / rc_model_horizon(rc);
     if (want < bpf / 8.0) want = bpf / 8.0;
     if (want > bpf * 4.0) want = bpf * 4.0;
@@ -468,18 +484,39 @@ int rc_model_frame_qp(rate_control_t *rc, int intra)
     int qp;
     double cplx;   /* this picture's, for the size limit */
     if (rc->cplx[0] > 0.0) {
-        const double exact = rc_model_qp_exact(rc->cplx[0], want);
+        /* A still picture - the last one again - can only be refined, and
+         * what that costs has nothing to do with what the next moving
+         * picture will: it has its own complexity, and its QP moves from
+         * the last still one's, starting from the moving pictures'.
+         *
+         * ⚠️ Kept apart, and no finer than RC_MODEL_STILL_RANGE below the
+         * moving pictures. Through one model, a still stretch - a loading
+         * screen, a paused menu - cost a few refinements and then nothing,
+         * walked QP down to 12, and the first picture that moved again was
+         * coded there: 920 kB for a 41 kB share at 20 Mbit/s, then QP 48
+         * for a second to pay for it. A repeated picture between moving
+         * ones, from a game rendering below the stream's frame rate, did
+         * the same on a smaller scale; through VA with a screen capture
+         * falling behind, CBR 20 Mbit/s came out at 41-68 Mbit/s. */
+        const bool st = still && !intra && rc->model_last_p_qp > 0;
+        const double k = st && rc->cplx_still > 0.0 ? rc->cplx_still : rc->cplx[0];
+        const int last = st && rc->still_last_qp > 0 ? rc->still_last_qp : rc->model_last_p_qp;
+        const double exact = rc_model_qp_exact(k, want);
         qp = (int)lround(exact);
         /* Hold the QP of the last P picture until the model moves a whole
          * step away from it: a value near a rounding edge otherwise flips
          * between two QPs picture after picture, and the picture flickers. */
-        if (rc->model_last_p_qp > 0 && fabs(exact - rc->model_last_p_qp) < 1.0) qp = rc->model_last_p_qp;
-        if (rc->model_last_p_qp > 0) {
-            if (qp > rc->model_last_p_qp + RC_MODEL_MAX_STEP) qp = rc->model_last_p_qp + RC_MODEL_MAX_STEP;
-            if (qp < rc->model_last_p_qp - RC_MODEL_MAX_STEP) qp = rc->model_last_p_qp - RC_MODEL_MAX_STEP;
+        if (last > 0 && fabs(exact - last) < 1.0) qp = last;
+        if (last > 0) {
+            if (qp > last + RC_MODEL_MAX_STEP) qp = last + RC_MODEL_MAX_STEP;
+            if (qp < last - RC_MODEL_MAX_STEP) qp = last - RC_MODEL_MAX_STEP;
+        }
+        if (st) {
+            if (qp > rc->model_last_p_qp) qp = rc->model_last_p_qp;
+            if (qp < rc->model_last_p_qp - RC_MODEL_STILL_RANGE) qp = rc->model_last_p_qp - RC_MODEL_STILL_RANGE;
         }
         if (intra) qp -= RC_MODEL_I_BOOST;
-        cplx = intra ? (rc->cplx[1] > 0.0 ? rc->cplx[1] : rc->cplx[0] * RC_MODEL_I_OVER_P) : rc->cplx[0];
+        cplx = intra ? (rc->cplx[1] > 0.0 ? rc->cplx[1] : rc->cplx[0] * RC_MODEL_I_OVER_P) : k;
     } else if (rc->cplx[1] > 0.0) {
         /* An I picture seen, no P yet: guess P from it. */
         qp = rc_model_qp_for(rc->cplx[1] / RC_MODEL_I_OVER_P, want);
@@ -506,11 +543,15 @@ int rc_model_frame_qp(rate_control_t *rc, int intra)
     return qp;
 }
 
-void rc_model_frame_coded(rate_control_t *rc, int intra, int qp, int bits)
+void rc_model_frame_coded(rate_control_t *rc, int intra, int still, int qp, int bits)
 {
     if (!rc || bits <= 0) return;
     const double c = (double)bits * pow(2.0, (qp - 12) / RC_MODEL_QP_HALF);
-    double *k = &rc->cplx[intra ? 1 : 0];
+    /* Still pictures teach their own complexity, never the moving one's -
+     * see rc_model_frame_qp(). */
+    const bool st = still && !intra && rc->model_last_p_qp > 0;
+    double *k = intra ? &rc->cplx[1] : st ? &rc->cplx_still : &rc->cplx[0];
+    if (!intra) rc->still_share = rc->still_share * (15.0 / 16.0) + (st ? 1.0 / 16.0 : 0.0);
     /* Follow the content over several pictures, averaging log(complexity)
      * with a quarter's weight on the newest.
      *
@@ -522,6 +563,11 @@ void rc_model_frame_coded(rate_control_t *rc, int intra, int qp, int bits)
      * the average over. */
     if (*k > 0.0 && c < *k * 16.0 && c > *k / 16.0) *k = exp(0.75 * log(*k) + 0.25 * log(c));
     else                                            *k = c;
-    if (!intra) rc->model_last_p_qp = qp;
+    if (st) {
+        rc->still_last_qp = qp;
+    } else if (!intra) {
+        rc->model_last_p_qp = qp;
+        rc->still_last_qp = 0;
+    }
 }
 

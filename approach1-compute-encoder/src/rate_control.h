@@ -59,7 +59,13 @@ typedef struct {
     int      model;
     double   cplx[2];         /* bits * 2^((qp - 12) / 5) of P [0] and I [1] pictures, 0 = not seen */
     double   debt;            /* bits produced minus bits allowed, since rc_init() */
-    int      model_last_p_qp; /* 0 = no P picture yet */
+    int      model_last_p_qp; /* of the last moving P picture, 0 = none yet */
+    /* Still P pictures - the last picture again, which the encoder can
+     * only refine - have a complexity and a QP of their own; see
+     * rc_model_frame_qp(). */
+    double   cplx_still;      /* 0 = no still picture seen */
+    int      still_last_qp;   /* 0 = none since the last moving picture */
+    double   still_share;     /* of recent P pictures, the share that were still */
     double   pixels;          /* per picture, for the first guess */
 } rate_control_t;
 
@@ -70,9 +76,11 @@ int rc_get_frame_qp(rate_control_t *rc, uint64_t est_sad);
 void rc_update_stats(rate_control_t *rc, int bits_used);
 
 /* The model: the QP for the next picture, and what a picture coded at
- * `qp` cost. rc_update_stats() still takes every picture's bits. */
-int rc_model_frame_qp(rate_control_t *rc, int intra);
-void rc_model_frame_coded(rate_control_t *rc, int intra, int qp, int bits);
+ * `qp` cost. `still`: a P picture with the same samples as the one before
+ * it, as the caller found before coding it. rc_update_stats() still takes
+ * every picture's bits. */
+int rc_model_frame_qp(rate_control_t *rc, int intra, int still);
+void rc_model_frame_coded(rate_control_t *rc, int intra, int still, int qp, int bits);
 
 void rc_set_max_frame_size(rate_control_t *rc, uint32_t max_frame_bits);
 uint32_t rc_get_max_frame_size(const rate_control_t *rc);

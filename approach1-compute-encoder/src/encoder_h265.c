@@ -458,6 +458,12 @@ struct hevc_encoder {
     uint8_t *dl_y;
     uint8_t *dl_uv;
 
+    /* Every eighth row of the last picture's luma and chroma, as it came
+     * in, for telling a repeated picture from a new one - see
+     * same_as_last(). */
+    uint8_t *last_rows;
+    bool have_last_rows;
+
     uint8_t *slice_rbsp;
     size_t   slice_rbsp_cap;
 
@@ -661,6 +667,7 @@ hevc_encoder_t *hevc_encoder_create_depth(bc250_gpu_context_t *gpu_ctx,
     }
     enc->dl_y = malloc((size_t)width * height * bps);
     enc->dl_uv = malloc((size_t)(width / 2) * (height / 2) * 2 * bps);
+    enc->last_rows = malloc(((size_t)height / 8 + (size_t)height / 16 + 2) * width * bps);
 
     enc->slice_rbsp_cap = luma_size + 65536;
     enc->slice_rbsp = malloc(enc->slice_rbsp_cap);
@@ -716,7 +723,7 @@ hevc_encoder_t *hevc_encoder_create_depth(bc250_gpu_context_t *gpu_ctx,
         !enc->recon_y || !enc->recon_cb || !enc->recon_cr ||
         !enc->prev_recon_y || !enc->prev_recon_cb || !enc->prev_recon_cr ||
         !enc->cu_skip_map || !enc->cu_is_inter || !enc->cu_depth || !enc->mv_x_map || !enc->mv_y_map ||
-        !enc->luma_mode_map || !enc->dl_y || !enc->dl_uv ||
+        !enc->luma_mode_map || !enc->dl_y || !enc->dl_uv || !enc->last_rows ||
         !enc->slice_rbsp || !enc->scratch_out ||
         !enc->hpel[0] || !enc->hpel[1] || !enc->hpel[2] || !enc->hpel[3] || !enc->hpel_tmp ||
         !enc->row_buf || !enc->row_len || !enc->row_sad || !enc->row_ctx || !enc->row_progress || !enc->row_waiters ||
@@ -888,6 +895,7 @@ void hevc_encoder_destroy(hevc_encoder_t *encoder)
     free(encoder->mv_y_map);
     free(encoder->luma_mode_map);
     free(encoder->dl_y); free(encoder->dl_uv);
+    free(encoder->last_rows);
     for (int i = 0; i < encoder->num_slices; i++) free(encoder->slice_buf[i]);
     free(encoder->slice_rbsp);
     free(encoder->scratch_out);
@@ -1473,6 +1481,29 @@ static void encode_slices(void *arg, int begin, int end)
     }
 }
 
+/* Whether the picture in dl_y / dl_uv has the same samples as the last
+ * one, on every eighth row of each plane - what a game rendering below the
+ * stream's frame rate, a still screen, or a caller repeating pictures for
+ * an encoder that fell behind all give. Natural video never repeats a
+ * picture to the bit. Keeps this picture's rows for the next call. 30 us at
+ * 1080p. */
+static bool same_as_last(hevc_encoder_t *e)
+{
+    const size_t row = (size_t)e->width * (e->bit_depth > 8 ? 2 : 1);
+    uint8_t *keep = e->last_rows;
+    bool same = e->have_last_rows;
+    for (int plane = 0; plane < 2; plane++) {
+        const uint8_t *p = plane ? e->dl_uv : e->dl_y;
+        const uint32_t rows = plane ? e->height / 2 : e->height;
+        for (uint32_t r = 0; r < rows; r += 8, keep += row) {
+            if (same && memcmp(keep, p + (size_t)r * row, row) != 0) same = false;
+            memcpy(keep, p + (size_t)r * row, row);
+        }
+    }
+    e->have_last_rows = true;
+    return same;
+}
+
 static int encode_core(hevc_encoder_t *encoder, uint8_t *output_buf, size_t output_size)
 {
     bool is_idr = (encoder->frame_count % encoder->gop_size == 0) || encoder->force_idr || !encoder->has_ref;
@@ -1480,10 +1511,13 @@ static int encode_core(hevc_encoder_t *encoder, uint8_t *output_buf, size_t outp
     if (is_idr) {
         encoder->poc = 0;
     }
+    /* Every picture's rows are kept, an IDR's too, for the next one. */
+    const bool same = same_as_last(encoder);
+    const bool still = same && !is_idr;
 
     /* In VBR/CBR/LOW_LATENCY mode, update QP via rate control model */
     if (encoder->rc.mode != RC_CQP) {
-        int target_qp = encoder->rc.model ? rc_model_frame_qp(&encoder->rc, is_idr)
+        int target_qp = encoder->rc.model ? rc_model_frame_qp(&encoder->rc, is_idr, still)
                                           : rc_get_frame_qp(&encoder->rc, is_idr ? 0 : encoder->last_frame_sad);
         if (target_qp >= 1 && target_qp <= 51) {
             encoder->qp = target_qp;
@@ -1674,7 +1708,7 @@ static int encode_core(hevc_encoder_t *encoder, uint8_t *output_buf, size_t outp
 
     if (real_coded > 0 && encoder->rc.mode != RC_CQP) {
         rc_update_stats(&encoder->rc, (int)(real_coded * 8));
-        if (encoder->rc.model) rc_model_frame_coded(&encoder->rc, is_idr, encoder->qp, (int)(real_coded * 8));
+        if (encoder->rc.model) rc_model_frame_coded(&encoder->rc, is_idr, still, encoder->qp, (int)(real_coded * 8));
     }
 
     /* Update reference buffers for subsequent P-frames */
