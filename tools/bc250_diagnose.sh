@@ -82,6 +82,15 @@ for dri in "${DRI_CANDIDATES[@]}"; do
         echo -e "  ${GREEN}✓ Found driver binary: $dri/bc250_drv_video.so${NC}"
         FOUND_DRIVER=1
         FOUND_DRIVER_DIR="$dri"
+        if command -v ldd &> /dev/null; then
+            MISSING_LIBS=$(ldd "$dri/bc250_drv_video.so" 2>&1 | grep "not found" || true)
+            if [ -n "$MISSING_LIBS" ]; then
+                echo -e "  ${RED}✗ Driver binary has MISSING dynamic dependencies (dlopen will fail):${NC}"
+                echo "$MISSING_LIBS" | sed 's/^/    /'
+            else
+                echo -e "  ${GREEN}✓ All shared library dependencies resolved (ldd clean)${NC}"
+            fi
+        fi
         break
     fi
 done
@@ -130,6 +139,15 @@ fi
 
 # 4. VA-API Capabilities & Benchmark
 echo -e "\n${BOLD}[4/5] Testing VA-API Driver & Running Encode Benchmark...${NC}"
+
+# Check DRI render node permissions
+if [ -e "/dev/dri/renderD128" ]; then
+    if [ ! -r "/dev/dri/renderD128" ] || [ ! -w "/dev/dri/renderD128" ]; then
+        echo -e "  ${RED}✗ Current user ($(whoami)) lacks read/write permissions to /dev/dri/renderD128!${NC}"
+        echo -e "    Fix: sudo usermod -aG render,video $(whoami) && newgrp render"
+    fi
+fi
+
 export LIBVA_DRIVER_NAME=bc250
 # 32-bit paths are at the END on purpose. A 64-bit client walks the list and
 # hits its driver in an early entry; a 32-bit client (Steam Link) fails to
@@ -145,7 +163,7 @@ if command -v vainfo &> /dev/null; then
         grep -i -E "VAProfileH264|VAProfileHEVC" /tmp/bc250_vainfo.log | sed 's/^/    /'
     else
         echo -e "  ${YELLOW}! vainfo reported non-zero status (Vulkan/DRM display access):${NC}"
-        cat /tmp/bc250_vainfo.log | tail -n 5 | sed 's/^/    /'
+        cat /tmp/bc250_vainfo.log | sed 's/^/    /'
     fi
     rm -f /tmp/bc250_vainfo.log
 fi
@@ -169,6 +187,10 @@ if command -v ffmpeg &> /dev/null; then
         echo -e "  ${BOLD}Encoder Throughput:${NC} ${GREEN}${FPS} FPS${NC} (Headroom: $(( FPS / 60 ))x real-time)"
     else
         echo -e "  ${YELLOW}Note: ffmpeg live bench test skipped (no renderD128 permissions or headless).${NC}"
+        if [ -s /tmp/bc250_bench.err ]; then
+            echo -e "  ${RED}FFmpeg error output:${NC}"
+            cat /tmp/bc250_bench.err | head -n 10 | sed 's/^/    /'
+        fi
     fi
     rm -f /tmp/bc250_bench.err
 fi
