@@ -122,6 +122,10 @@ struct h264_decoder {
     int band_rows;
     int to_reconstruct;           /* first macroblock not yet reconstructed */
     h264d_residual_t *res;         /* the one being filled in right now */
+
+    /* Cached chroma scratch buffer for NV12 upload */
+    uint8_t *uv_buf;
+    size_t uv_cap;
 };
 
 /* ---- neighbours ------------------------------------------------------- */
