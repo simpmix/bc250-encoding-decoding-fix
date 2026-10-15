@@ -15,8 +15,6 @@ In verified gaming benchmarks on the BC-250:
 
 By dynamically shifting motion estimation between GPU CUs and Zen 2 CPU cores, 3D graphics rendering maintains full frame pacing without dropped stream frames.
 
----
-
 ## Quick Start Configuration
 
 ### 1. Automated Preset Application
@@ -50,8 +48,6 @@ export BC250_CPU_CORES=6,7
 export BC250_GOVERNOR_STATS=60
 ```
 
----
-
 ## Recommended Sunshine Web UI Settings
 
 Open the Sunshine Web Configuration (`https://localhost:47990`) and set:
@@ -64,8 +60,6 @@ Open the Sunshine Web Configuration (`https://localhost:47990`) and set:
 | **P-Frame Slices** | Auto (or driven via `BC250_SLICES_PER_FRAME=4`) | Allows Moonlight clients to decode macroblock slice stripes in parallel. |
 | **Keyframe Interval (GOP)** | `60` (or `fps * 1s`) | Matches standard 1-second recovery keyframe interval. |
 | **Frame Rate** | `60 fps` or `120 fps` | The governor dynamically tracks frame deadlines ($<16.6$ms for 60fps). |
-
----
 
 ## Dynamic Governor Tuning
 
@@ -101,8 +95,6 @@ The driver monitors Vulkan encode compute latency in real-time. When intense 3D 
 | `BC250_FORCE_TIER` | `0`, `1`, `2`, `3` | `-1` (Auto) | Force a specific governor tier for benchmarking/debugging. |
 | `BC250_HEVC_QP` | `1` to `51` | `27` | Base quantization parameter for HEVC encoder. |
 
----
-
 ## Live Telemetry Example
 
 When `BC250_GOVERNOR_STATS=60` is set, Sunshine logs show the governor adapting in real-time:
@@ -115,8 +107,6 @@ When `BC250_GOVERNOR_STATS=60` is set, Sunshine logs show the governor adapting 
 ```
 
 Notice that as GPU contention rises, the encoder scales search radius smoothly without dropping a single frame, and steps down smoothly with 4-frame hysteresis once GPU contention subsides.
-
----
 
 ## Troubleshooting
 

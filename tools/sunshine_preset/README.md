@@ -2,8 +2,6 @@
 
 Pre-tuned configuration for **Sunshine** to enable smooth, low-latency game streaming from your AMD BC-250 console to handheld devices (Steam Deck, ROG Ally, Android phones) or smart TVs via **Moonlight**.
 
----
-
 ## Quick Apply
 
 Run the automatic installer script from your terminal:
@@ -14,8 +12,6 @@ chmod +x apply_sunshine_preset.sh
 ```
 
 This will safely back up your existing configuration and apply the BC-250 VA-API encoder settings to `~/.config/sunshine/sunshine.conf`.
-
----
 
 ## Ring-fencing the GPU
 
@@ -30,8 +26,6 @@ This reads the CU topology from the driver, then limits the game to the lower CU
 
 `--dry-run` shows the plan, `--remove` undoes it, and **[`docs/streaming-ringfence.md`](../../docs/streaming-ringfence.md)** explains the granularity limits, what a fence genuinely buys, and what it does not.
 
----
-
 ## Recommended Moonlight Client Settings
 
 For the best visual quality and lowest latency on your handheld or client device:
@@ -43,8 +37,6 @@ For the best visual quality and lowest latency on your handheld or client device
 | **Bitrate** | `20 - 30 Mbps` | Clean stream with no compression artifacts |
 | **Video Codec** | `H.264` | Lowest decode latency across Android, Linux, & Windows |
 | **Frame Pacing** | `Balanced with lowest latency` | Prevents stuttering |
-
----
 
 ## Why These Settings?
 * **VA-API Backend:** Directly leverages the APU's 40 unlocked Compute Units (Cyan Skillfish / Oberon architecture).

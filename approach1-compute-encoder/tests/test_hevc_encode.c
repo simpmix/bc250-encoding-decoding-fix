@@ -473,7 +473,7 @@ static void unset_env_var(const char *name) {
 }
 
 static void test_hevc_gpu_flags_and_fallback(void) {
-    printf("[test_hevc_encode] GPU flags & CPU fallback sanity...\n");
+    printf("[test_hevc_encode] GPU flags & CPU fallback sanity (multi-frame)...\n");
     const uint32_t width = 128, height = 96;
     const size_t y_size = (size_t)width * height;
     const size_t uv_size = (size_t)width * (height / 2);
@@ -485,37 +485,49 @@ static void test_hevc_gpu_flags_and_fallback(void) {
     memset(y_plane, 0x80, y_size);
     memset(uv_plane, 0x80, uv_size);
 
-    /* 1. Test forced CPU fallback via BC250_HEVC_FORCE_CPU=1 */
-    set_env_var("BC250_HEVC_FORCE_CPU", "1");
-    hevc_encoder_t *enc_cpu = hevc_encoder_create(NULL, width, height, 30, 2000000);
-    assert(enc_cpu != NULL);
-    int written_cpu = hevc_encoder_encode_raw(enc_cpu, y_plane, (int)width, uv_plane, (int)width, out_buf, out_cap);
-    assert(written_cpu > 0);
-    hevc_encoder_destroy(enc_cpu);
-    unset_env_var("BC250_HEVC_FORCE_CPU");
+    const char *flag_names[] = {
+        "BC250_HEVC_FORCE_CPU",
+        "BC250_HEVC_GPU_ME",
+        "BC250_HEVC_GPU_PIPELINE"
+    };
 
-    /* 2. Test GPU ME opt-in flag via BC250_HEVC_GPU_ME=1 */
-    set_env_var("BC250_HEVC_GPU_ME", "1");
-    hevc_encoder_t *enc_me = hevc_encoder_create(NULL, width, height, 30, 2000000);
-    assert(enc_me != NULL);
-    int written_me = hevc_encoder_encode_raw(enc_me, y_plane, (int)width, uv_plane, (int)width, out_buf, out_cap);
-    assert(written_me > 0);
-    hevc_encoder_destroy(enc_me);
-    unset_env_var("BC250_HEVC_GPU_ME");
+    for (int mode = 0; mode < 3; mode++) {
+        set_env_var(flag_names[mode], "1");
+        hevc_encoder_t *enc = hevc_encoder_create(NULL, width, height, 30, 2000000);
+        assert(enc != NULL);
 
-    /* 3. Test Full Pipeline opt-in flag via BC250_HEVC_GPU_PIPELINE=1 */
-    set_env_var("BC250_HEVC_GPU_PIPELINE", "1");
-    hevc_encoder_t *enc_pipe = hevc_encoder_create(NULL, width, height, 30, 2000000);
-    assert(enc_pipe != NULL);
-    int written_pipe = hevc_encoder_encode_raw(enc_pipe, y_plane, (int)width, uv_plane, (int)width, out_buf, out_cap);
-    assert(written_pipe > 0);
-    hevc_encoder_destroy(enc_pipe);
-    unset_env_var("BC250_HEVC_GPU_PIPELINE");
+        for (int frame = 0; frame < 5; frame++) {
+            if (frame > 0) {
+                /* Moving gradient pattern for P-frames to exercise motion estimation */
+                for (uint32_t r = 0; r < height; r++) {
+                    for (uint32_t c = 0; c < width; c++) {
+                        y_plane[r * width + c] = (uint8_t)((r * 4 + c * 2 + frame * 8) & 0xFF);
+                    }
+                }
+            }
+
+            int written = hevc_encoder_encode_raw(enc, y_plane, (int)width, uv_plane, (int)width, out_buf, out_cap);
+            assert(written > 0);
+
+            if (frame == 0) {
+                int expected_types[] = { 35 /* AUD */, 32 /* VPS */, 33 /* SPS */, 34 /* PPS */, 19 /* IDR_W_RADL */ };
+                int ok = check_nal_sequence(out_buf, (size_t)written, expected_types, 5);
+                assert(ok && "expected AUD,VPS,SPS,PPS,IDR sequence on frame 0");
+            } else {
+                int expected_types[] = { 35 /* AUD */, 1 /* TRAIL_R */ };
+                int ok = check_nal_sequence(out_buf, (size_t)written, expected_types, 2);
+                assert(ok && "expected AUD,TRAIL_R P-slice NAL");
+            }
+        }
+
+        hevc_encoder_destroy(enc);
+        unset_env_var(flag_names[mode]);
+    }
 
     free(y_plane);
     free(uv_plane);
     free(out_buf);
-    printf("[test_hevc_encode] GPU flags & CPU fallback OK.\n");
+    printf("[test_hevc_encode] GPU flags & CPU fallback multi-frame OK.\n");
 }
 
 int main(void) {

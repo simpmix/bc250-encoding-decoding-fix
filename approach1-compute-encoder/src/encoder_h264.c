@@ -3856,24 +3856,24 @@ void h264_encoder_destroy(h264_encoder_t *encoder)
     }
 #endif
     if (!encoder) return;
-    if (encoder->output_buf) free(encoder->output_buf);
-    if (encoder->prev_y_frame) free(encoder->prev_y_frame);
-    if (encoder->nz_luma) free(encoder->nz_luma);
-    if (encoder->nz_cb) free(encoder->nz_cb);
-    if (encoder->nz_cr) free(encoder->nz_cr);
-    if (encoder->dc_cbf_luma) free(encoder->dc_cbf_luma);
-    if (encoder->dc_cbf_chroma) free(encoder->dc_cbf_chroma);
-    if (encoder->cbp_nb) free(encoder->cbp_nb);
-    if (encoder->mvd_x_abs) free(encoder->mvd_x_abs);
-    if (encoder->mvd_y_abs) free(encoder->mvd_y_abs);
-    if (encoder->skip_flag) free(encoder->skip_flag);
-    if (encoder->quant_levels_shadow) free(encoder->quant_levels_shadow);
-    if (encoder->dc_coeff_shadow) free(encoder->dc_coeff_shadow);
-    if (encoder->pred_modes_shadow) free(encoder->pred_modes_shadow);
-    if (encoder->mvs_shadow) free(encoder->mvs_shadow);
-    if (encoder->nz_masks_shadow) free(encoder->nz_masks_shadow);
-    if (encoder->cpu_mvs) free(encoder->cpu_mvs);
-    if (encoder->me_src_stage) free(encoder->me_src_stage);
-    if (encoder->me_ref_stage) free(encoder->me_ref_stage);
+    free(encoder->output_buf);
+    free(encoder->prev_y_frame);
+    free(encoder->nz_luma);
+    free(encoder->nz_cb);
+    free(encoder->nz_cr);
+    free(encoder->dc_cbf_luma);
+    free(encoder->dc_cbf_chroma);
+    free(encoder->cbp_nb);
+    free(encoder->mvd_x_abs);
+    free(encoder->mvd_y_abs);
+    free(encoder->skip_flag);
+    free(encoder->quant_levels_shadow);
+    free(encoder->dc_coeff_shadow);
+    free(encoder->pred_modes_shadow);
+    free(encoder->mvs_shadow);
+    free(encoder->nz_masks_shadow);
+    free(encoder->cpu_mvs);
+    free(encoder->me_src_stage);
+    free(encoder->me_ref_stage);
     free(encoder);
 }

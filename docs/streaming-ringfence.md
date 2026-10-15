@@ -14,8 +14,6 @@ Everything here is measured against the driver's own log
 (`BC250_PERF_STATS=1`, `BC250_GOVERNOR_STATS=1`) and its DEVLOG, which is
 where the numbers come from. Nothing on this page is a guess.
 
----
-
 ## 1. What there is, and what there isn't
 
 | Mechanism | Available here? |

@@ -2,8 +2,6 @@
 
 Technical summary of the VCN 2.0.3 IP block on the AMD BC-250 ("Cyan Skillfish" / PS5 "Oberon" APU) and the definitive reverse-engineering proof of why physical VCN cannot be unlocked.
 
----
-
 ## Hardware Findings & Security Architecture
 
 ### 1. The Platform Security Processor (PSP) & Data Fabric Access Control List

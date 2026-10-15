@@ -1286,11 +1286,12 @@ static void FUNC(decide_cu)(hevc_encoder_t *enc, hevc_cabac_t *chain, int cu_x, 
             const gpu_mv_t *gmv = &enc->gpu_mvs[cu_idx];
             if (gmv->sad <= 96 && gmv->mvx == 0 && gmv->mvy == 0 &&
                 cand[best_merge].x == 0 && cand[best_merge].y == 0) {
-                cd.kind = CU_SKIP;
-                memset(cd.res.cbf_y, 0, sizeof(cd.res.cbf_y));
-                cd.res.cbf_y8 = 0;
-                cd.res.cbf_cb = cd.res.cbf_cr = 0;
-                *d = cd;
+                d->kind = CU_SKIP;
+                d->merge_idx = best_merge;
+                memset(d->res.cbf_y, 0, sizeof(d->res.cbf_y));
+                d->res.cbf_y8 = 0;
+                d->res.cbf_cb = d->res.cbf_cr = 0;
+                d->j = best_j;
                 goto decided;
             }
         }

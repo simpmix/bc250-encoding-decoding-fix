@@ -1850,6 +1850,7 @@ int hevc_encoder_encode_frame(hevc_encoder_t *encoder,
 
     bool is_idr = (encoder->frame_count % encoder->gop_size == 0) || encoder->force_idr || !encoder->has_ref;
     const bool ten_bit = encoder->bit_depth > 8;
+    encoder->num_gpu_mvs = 0;
 
     if (encoder->x265 && gpu_ctx && input_surface.y_plane != VK_NULL_HANDLE) {
         size_t bpp = ten_bit ? 2 : 1;
@@ -1920,20 +1921,22 @@ int hevc_encoder_encode_frame(hevc_encoder_t *encoder,
                         encoder->num_gpu_mvs = (uint32_t)(copy_bytes / sizeof(gpu_mv_t));
                     }
                 }
-            } else if (encoder->enable_gpu_me && !is_idr && encoder->has_ref) {
+            } else if (encoder->enable_gpu_me) {
                 gpu_compute_begin_picture(gpu_ctx, input_surface);
-                gpu_compute_dispatch_hevc_me(gpu_ctx, input_surface, (int)encoder->width, (int)encoder->height);
+                gpu_compute_dispatch_hevc_me(gpu_ctx, input_surface, (int)encoder->width, (int)encoder->height, is_idr ? 1 : 0);
                 gpu_compute_end_picture(gpu_ctx);
                 gpu_compute_sync(gpu_ctx);
 
-                void *mv_data = NULL;
-                size_t mv_size = 0;
-                if (gpu_compute_get_mv_staging_data(gpu_ctx, &mv_data, &mv_size) == 0 && mv_data) {
-                    size_t total_cus = ((size_t)encoder->coded_width / HEVC_CU_SIZE) * (encoder->coded_height / HEVC_CU_SIZE);
-                    size_t max_bytes = total_cus * sizeof(gpu_mv_t);
-                    size_t copy_bytes = (mv_size < max_bytes) ? mv_size : max_bytes;
-                    memcpy(encoder->gpu_mvs, mv_data, copy_bytes);
-                    encoder->num_gpu_mvs = (uint32_t)(copy_bytes / sizeof(gpu_mv_t));
+                if (!is_idr && encoder->has_ref) {
+                    void *mv_data = NULL;
+                    size_t mv_size = 0;
+                    if (gpu_compute_get_mv_staging_data(gpu_ctx, &mv_data, &mv_size) == 0 && mv_data) {
+                        size_t total_cus = ((size_t)encoder->coded_width / HEVC_CU_SIZE) * (encoder->coded_height / HEVC_CU_SIZE);
+                        size_t max_bytes = total_cus * sizeof(gpu_mv_t);
+                        size_t copy_bytes = (mv_size < max_bytes) ? mv_size : max_bytes;
+                        memcpy(encoder->gpu_mvs, mv_data, copy_bytes);
+                        encoder->num_gpu_mvs = (uint32_t)(copy_bytes / sizeof(gpu_mv_t));
+                    }
                 }
             }
         }

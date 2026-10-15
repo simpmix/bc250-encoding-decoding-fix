@@ -659,7 +659,7 @@ static VAStatus finish_job(hevc_decoder_t *dec, struct bc250_hevc_job *job,
 
         /* Skip start code prefix if present in buffer */
         size_t nal_off = 0;
-        if (raw_len >= 3 && raw[0] == 0 && raw[1] == 0) {
+        if (raw[0] == 0 && raw[1] == 0) {
             if (raw[2] == 1) nal_off = 3;
             else if (raw_len >= 4 && raw[2] == 0 && raw[3] == 1) nal_off = 4;
         }

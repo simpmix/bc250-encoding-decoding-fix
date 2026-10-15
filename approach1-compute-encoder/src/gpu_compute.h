@@ -606,7 +606,7 @@ int gpu_compute_dispatch_encode_ext(gpu_context_t *ctx, gpu_image_t render_targe
 /* Lightweight dispatch running ONLY Stage 2 (subgroup-accelerated Vulkan Motion Estimation)
  * without H.264 transform/quant/entropy stages. Used to accelerate HEVC inter frames on GPU. */
 int gpu_compute_dispatch_me_only(gpu_context_t *ctx, gpu_image_t render_target, int width, int height);
-int gpu_compute_dispatch_hevc_me(gpu_context_t *ctx, gpu_image_t render_target, int width, int height);
+int gpu_compute_dispatch_hevc_me(gpu_context_t *ctx, gpu_image_t render_target, int width, int height, int is_idr);
 int gpu_compute_dispatch_hevc_transform(gpu_context_t *ctx, int num_blocks, int transform_size, int is_dst, int bit_depth);
 int gpu_compute_dispatch_hevc_quant(gpu_context_t *ctx, int num_blocks, int log2_size, int qp, int bit_depth);
 int gpu_compute_dispatch_hevc_pipeline(gpu_context_t *ctx, gpu_image_t render_target, int width, int height, int qp, int is_idr);

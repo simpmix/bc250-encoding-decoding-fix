@@ -2,8 +2,6 @@
 
 This guide covers safety procedures, automated test runners, and real-world test pipelines for validating the BC-250 driver (`bc250_drv_video.so`) on Linux.
 
----
-
 ## 1. Safety Guidelines on Hardware
 
 When working with development drivers or testing extreme workloads on the BC-250:
@@ -22,8 +20,6 @@ When working with development drivers or testing extreme workloads on the BC-250
    ```
 4. **Recovery:** If an unrecoverable hard lock occurs, hold the physical power button or use the kernel SysRq keys (`Alt + SysRq + R-E-I-S-U-B`) to trigger a clean disk sync and restart.
 
----
-
 ## 2. Automated Diagnostic Tool
 
 Run the self-contained diagnostic script to verify device detection, active compute units, and run an automated encoding benchmark:
@@ -38,8 +34,6 @@ This script verifies:
 * DKMS audio fix status (`bc250_audio_fix`).
 * VA-API entrypoints and profiles with `vainfo`.
 * Performs a 100-frame hardware encode test.
-
----
 
 ## 3. Unit Test Suite (11 Test Suites)
 
@@ -65,8 +59,6 @@ All 11 test suites pass cleanly headless:
 10. `IntraPredUnitTest`
 11. `HevcTransformUnitTest`
 
----
-
 ## 4. Official ITU JCT-VC HEVC Conformance Harness
 
 The driver includes an automated test harness validating conformance against official ITU-T H.265 / ISO/IEC 23008-2 JCT-VC bitstreams (146 of 147 vectors passing bit-exact):
@@ -84,8 +76,6 @@ Tests the standalone HEVC decoder directly:
 ```
 
 *(Note: `TSUNEQBD_A_MAIN10` specifies differing bit depths for luma and chroma, which is unsupported by FFmpeg).*
-
----
 
 ## 5. Real-World Encoding Tests with FFmpeg
 
@@ -113,8 +103,6 @@ ffmpeg -vaapi_device /dev/dri/renderD128 -i input.mkv \
   -vf 'format=nv12,hwupload' -c:v hevc_vaapi -qp 18 -frames:v 300 output_cqp18.mp4
 ```
 
----
-
 ## 6. Real-World Playback & Decoding Tests
 
 ### (a) mpv Hardware Decoding Verification
@@ -128,8 +116,6 @@ Test audio/video sync stability with multi-threaded wavefront parallel processin
 ```bash
 LIBVA_DRIVER_NAME=bc250 mpv --hwdec=vaapi --video-sync=display-resample video.mp4
 ```
-
----
 
 ## 7. Game & VR Streaming Tests
 

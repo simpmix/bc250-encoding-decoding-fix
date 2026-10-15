@@ -3558,7 +3558,7 @@ int gpu_compute_dispatch_me_only(gpu_context_t *ctx, gpu_image_t render_target, 
     return 0;
 }
 
-int gpu_compute_dispatch_hevc_me(gpu_context_t *ctx, gpu_image_t render_target, int width, int height) {
+int gpu_compute_dispatch_hevc_me(gpu_context_t *ctx, gpu_image_t render_target, int width, int height, int is_idr) {
     if (!ctx) return -1;
     VkPipeline pipeline = ctx->hevc_me_pipeline ? ctx->hevc_me_pipeline : ctx->motion_est_pipeline;
     if (!pipeline) return -1;
@@ -3594,36 +3594,32 @@ int gpu_compute_dispatch_hevc_me(gpu_context_t *ctx, gpu_image_t render_target, 
     }
     render_target.current_layout = VK_IMAGE_LAYOUT_GENERAL;
 
-    /* Bind reference image descriptor for Motion Estimation */
-    VkImageView ref_view = render_target.y_view;
-    if (ctx->has_recon_frame && ctx->recon_image.y_view != VK_NULL_HANDLE) {
-        ref_view = ctx->recon_image.y_view;
-    }
-    if (render_target.y_view) {
+    /* Dispatch Motion Estimation only on non-IDR frames when a valid reference frame exists */
+    if (!is_idr && ctx->has_recon_frame && ctx->recon_image.y_view != VK_NULL_HANDLE && render_target.y_view) {
         update_storage_image_descriptor(ctx->device, ctx->me_desc_set, 0, render_target.y_view);
-        update_storage_image_descriptor(ctx->device, ctx->me_desc_set, 1, ref_view);
+        update_storage_image_descriptor(ctx->device, ctx->me_desc_set, 1, ctx->recon_image.y_view);
+
+        uint32_t pc[8] = {
+            (uint32_t)width,
+            (uint32_t)height,
+            width_cus,
+            height_cus,
+            26, /* default QP */
+            16, /* search range */
+            0,
+            0
+        };
+
+        vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+        vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, ctx->motion_est_layout, 0, 1, &ctx->me_desc_set, 0, NULL);
+        vkCmdPushConstants(cmd_buf, ctx->motion_est_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), pc);
+        vkCmdDispatch(cmd_buf, width_cus, height_cus, 1);
+        insert_compute_barrier(cmd_buf);
+
+        VkBufferCopy mv_copy_region = { .srcOffset = 0, .dstOffset = 0, .size = ctx->mv_staging_size };
+        vkCmdCopyBuffer(cmd_buf, ctx->mv_buffer, ctx->mv_staging_buffers[ctx->current_buf], 1, &mv_copy_region);
+        ctx->hevc_counters.me_dispatches++;
     }
-
-    uint32_t pc[8] = {
-        (uint32_t)width,
-        (uint32_t)height,
-        width_cus,
-        height_cus,
-        26, /* default QP */
-        16, /* search range */
-        0,
-        0
-    };
-
-    vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-    vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, ctx->motion_est_layout, 0, 1, &ctx->me_desc_set, 0, NULL);
-    vkCmdPushConstants(cmd_buf, ctx->motion_est_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), pc);
-    vkCmdDispatch(cmd_buf, width_cus, height_cus, 1);
-    insert_compute_barrier(cmd_buf);
-
-    VkBufferCopy mv_copy_region = { .srcOffset = 0, .dstOffset = 0, .size = ctx->mv_staging_size };
-    vkCmdCopyBuffer(cmd_buf, ctx->mv_buffer, ctx->mv_staging_buffers[ctx->current_buf], 1, &mv_copy_region);
-    ctx->hevc_counters.me_dispatches++;
 
     if (ctx->recon_image.y_plane && render_target.y_plane) {
         transition_image_layout(cmd_buf, ctx->recon_image.y_plane, ctx->recon_image.current_layout, VK_IMAGE_LAYOUT_GENERAL);
