@@ -225,6 +225,7 @@ set(SOURCES
     src/h264_threads.c
     src/cpu_simd_me.c
     src/dynamic_governor.c
+    src/telemetry.c
 )
 
 add_library(bc250_drv_video SHARED ${SOURCES})
@@ -408,6 +409,16 @@ if(BUILD_GPU_CONTENTION)
         add_dependencies(gpu_contention gpu_contention_shader)
         add_custom_command(TARGET gpu_contention POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy ${GPU_CONTENTION_SPV} $<TARGET_FILE_DIR:gpu_contention>/gpu_contention.comp.spv)
+    endif()
+endif()
+
+# Real-time telemetry monitor (tools/bc250_stats.c)
+option(BUILD_BC250_STATS "Build the real-time telemetry monitor (tools/bc250_stats.c)" ON)
+if(BUILD_BC250_STATS AND NOT BUILD_32BIT)
+    set(BC250_STATS_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../tools/bc250_stats.c)
+    if(EXISTS ${BC250_STATS_SRC})
+        add_executable(bc250_stats ${BC250_STATS_SRC})
+        install(TARGETS bc250_stats RUNTIME DESTINATION bin OPTIONAL)
     endif()
 endif()
 

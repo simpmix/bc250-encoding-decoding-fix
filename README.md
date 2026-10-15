@@ -10,12 +10,13 @@ A high-performance, spec-compliant VA-API driver (`bc250_drv_video.so`) engineer
 The BC-250 is a repurposed PS5 APU (Zen 2 8-core/16-thread CPU, up to 40 unlocked Compute Units; Oberon / Cyan Skillfish semi-custom RDNA 1.5 architecture) whose physical VCN (Video Core Next) hardware engine was permanently unprovisioned and eFused off at the factory. Without a working VCN block, Linux applications fail to initialize hardware video acceleration. 
 
 This project solves this by delivering:
-1. **GPU Compute Video Encoders**: Real-time H.264 and H.265/HEVC encoding executed across the APU's 40 Compute Units using custom Vulkan compute shaders with asynchronous pipelining and AVX2 CPU SIMD offloading.
-2. **Bit-Exact VA-API Video Decoders (`VAEntrypointVLD`)**: Threaded H.264 and HEVC decoding running on the Zen 2 CPU, verified bit-exact against reference decoders across all 302 conformance tests.
-3. **Low-Latency Game & VR Streaming**: Pre-tuned presets and passive thread policies for Sunshine / Moonlight (1080p60/1440p) and WiVRn wireless VR streaming (~36ms motion-to-photon latency, ~190 Mbps throughput).
-4. **Hardware Audio Clock Fix**: DKMS kernel module repairing the missing DisplayPort/HDMI audio clock.
-
----
+1. **GPU Compute Video Encoders & Async Queue Pipelining**: Real-time H.264 and H.265/HEVC encoding executed across the APU's 40 Compute Units using custom Vulkan compute shaders with dedicated Asynchronous Compute Engine (ACE) hardware queues and double-buffered slot isolation.
+2. **Intelligent Predictive Governor v2 (Deadline-Aware Pacing)**: Dynamic gear-shifting between full GPU diamond search, fast downhill search, and AVX2 CPU SIMD offloading with real-time frame deadline budgets (16.6ms for 60fps, 8.3ms for 120fps) and 3D contention velocity tracking to eliminate dropped frames.
+3. **Low-Latency Bitrate & Jitter Smoothing**: Adaptive rate control enhancements handling sudden network bandwidth drops without macroblocking or packet spikes.
+4. **Real-Time Observability & Telemetry**: Live stats reporting / shared-memory telemetry (`/dev/shm/bc250_stats`) for monitoring encode latency, governor tiers, and dropped frame prevention with the `bc250_stats` monitor tool.
+5. **Bit-Exact VA-API Video Decoders (`VAEntrypointVLD`)**: Threaded H.264 and HEVC decoding running on the Zen 2 CPU, verified bit-exact against reference decoders across all 302 conformance tests.
+6. **Low-Latency Game & VR Streaming**: Pre-tuned presets and passive thread policies for Sunshine / Moonlight (1080p60/1440p) and WiVRn wireless VR streaming (~36ms motion-to-photon latency, ~190 Mbps throughput).
+7. **Hardware Audio Clock Fix**: DKMS kernel module repairing the missing DisplayPort/HDMI audio clock.
 
 ## Performance & Conformance Highlights
 
@@ -51,8 +52,6 @@ Bit-exact conformance against official ITU JCT-VC test streams and reference dec
 
 *(Note: The sole unmapped test vector, `TSUNEQBD_A_MAIN10`, specifies differing bit depths for luma and chroma, which FFmpeg itself does not support).*
 
----
-
 ## Supported Codec Matrix
 
 | Profile | Entrypoint | Acceleration | Max Resolution |
@@ -66,8 +65,6 @@ Bit-exact conformance against official ITU JCT-VC test streams and reference dec
 | `VAProfileHEVCMain` | `VAEntrypointVLD` (Decode) | Multi-Threaded CPU Wavefront (WPP) | **16384x16384 (16K)** |
 | `VAProfileHEVCMain10` | `VAEntrypointVLD` (Decode) | 10-Bit CPU Wavefront (P010) | **16384x16384 (16K)** |
 | `VAProfileNone` | `VAEntrypointVideoProc` | Vulkan Compute Scaler & Cropping | 4096x2160 (4K) |
-
----
 
 ## Quick Installation
 
@@ -100,8 +97,6 @@ tar -xzf bc250-driver-linux-x86_64.tar.gz
 sudo ./install.sh
 ```
 
----
-
 ## Streaming Presets & Tuning
 
 ### Sunshine / Moonlight (Game Streaming)
@@ -124,8 +119,6 @@ To configure WiVRn for ~36ms motion-to-photon latency and ~190 Mbps throughput:
 ```
 *Recommended Topology*: 2 Hardware VA-API streams (`left_eye` and `right_eye`) + 1 Software stream (alpha/foveation). See [`docs/wivrn-guide.md`](docs/wivrn-guide.md).
 
----
-
 ## Key Environment Variables
 
 | Variable | Default | Purpose |
@@ -146,8 +139,8 @@ To configure WiVRn for ~36ms motion-to-photon latency and ~190 Mbps throughput:
 | `BC250_QUEUE_PRIORITY` | *(unset)* | `low`/`medium`/`high`/`realtime` global queue priority. HIGH and REALTIME need `CAP_SYS_NICE` or Vulkan refuses the device outright - see `apply_gpu_ringfence.sh`. |
 | `BC250_GOVERNOR_DWELL_FRAMES` | `0` (`8` live) | Frames a tier must be held before the governor may enter the CPU ME offload. Bounds how often the per-frame work mix can change; `0` for offline transcode. |
 | `BC250_GPU_TIMEOUT_MS` | *(unset)* | Overrides the GPU fence-wait budget. Unset means 16 ms for a live streaming caller, infinite otherwise. |
-
----
+| `BC250_STATS_PATH` | `/dev/shm/bc250_stats` | Custom file path for real-time shared memory telemetry snapshot. |
+| `BC250_RC_JITTER_SMOOTHING` | `1` (live) | Enable (1) or disable (0) low-latency jitter smoothing filter and burst ceiling clamping. |
 
 ## Verification & Diagnostics
 
@@ -176,8 +169,17 @@ To configure WiVRn for ~36ms motion-to-photon latency and ~190 Mbps throughput:
    # Test standalone HEVC decoder:
    ./tools/test_hevc_conformance.sh
    ```
+5. Monitor live encoder telemetry & Governor v2 in real time:
+   ```bash
+   # Quick status check (ASCII header):
+   cat /dev/shm/bc250_stats
 
----
+   # Live updating dashboard:
+   ./tools/bc250_stats --watch
+
+   # Structured JSON for MangoHud, SteamVR, or monitoring scripts:
+   ./tools/bc250_stats --json
+   ```
 
 ## Building from Source
 
@@ -188,8 +190,6 @@ cmake --build build -j$(nproc)
 ctest --test-dir build --output-on-failure
 sudo cmake --install build
 ```
-
----
 
 ## License & Credits
 

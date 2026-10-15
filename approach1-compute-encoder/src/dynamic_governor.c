@@ -26,6 +26,12 @@ void dynamic_governor_init(dynamic_governor_t *gov)
     gov->tier1_threshold_ms = 8.0;
     gov->tier2_threshold_ms = 12.0;
     gov->tier3_threshold_ms = 15.5;
+    gov->frame_deadline_ms = 16.666667;
+    gov->tier1_overridden = false;
+    gov->tier2_overridden = false;
+    gov->tier3_overridden = false;
+    gov->predictive_pacing_enabled = true;
+    gov->dropped_frames_prevented = 0;
     gov->step_down_hysteresis = 4;
     gov->min_dwell_frames = 0;
     gov->frames_in_tier = 0;
@@ -95,17 +101,17 @@ void dynamic_governor_init(dynamic_governor_t *gov)
     const char *env_t1 = getenv("BC250_GOVERNOR_TIER1_MS");
     if (env_t1) {
         double v = atof(env_t1);
-        if (v > 0) gov->tier1_threshold_ms = v;
+        if (v > 0) { gov->tier1_threshold_ms = v; gov->tier1_overridden = true; }
     }
     const char *env_t2 = getenv("BC250_GOVERNOR_TIER2_MS");
     if (env_t2) {
         double v = atof(env_t2);
-        if (v > 0) gov->tier2_threshold_ms = v;
+        if (v > 0) { gov->tier2_threshold_ms = v; gov->tier2_overridden = true; }
     }
     const char *env_t3 = getenv("BC250_GOVERNOR_TIER3_MS");
     if (env_t3) {
         double v = atof(env_t3);
-        if (v > 0) gov->tier3_threshold_ms = v;
+        if (v > 0) { gov->tier3_threshold_ms = v; gov->tier3_overridden = true; }
     }
 
     const char *env_enable = getenv("BC250_GOVERNOR_ENABLE");
@@ -159,6 +165,44 @@ void dynamic_governor_init(dynamic_governor_t *gov)
     }
 }
 
+void dynamic_governor_set_deadline_ms(dynamic_governor_t *gov, double deadline_ms)
+{
+    if (!gov || deadline_ms <= 0.0) return;
+    gov->frame_deadline_ms = deadline_ms;
+
+    /* Governor v2 Deadline-Aware Pacing:
+     * Gear-shifting thresholds scale proportionally with target frame budget:
+     * - Tier 1 (GPU Fast ME / Downhill): 45% of frame deadline (e.g. 7.5ms @ 60fps, 3.75ms @ 120fps)
+     * - Tier 2 (CPU SIMD ME Offload): 65% of frame deadline (e.g. 10.8ms @ 60fps, 5.4ms @ 120fps)
+     * - Tier 3 (Emergency Failover P_Skip): 92% of frame deadline (e.g. 15.3ms @ 60fps, 7.67ms @ 120fps)
+     * Explicit environment overrides (BC250_GOVERNOR_TIERx_MS) take precedence. */
+    if (!gov->tier1_overridden) {
+        gov->tier1_threshold_ms = deadline_ms * 0.45;
+    }
+    if (!gov->tier2_overridden) {
+        gov->tier2_threshold_ms = deadline_ms * 0.65;
+    }
+    if (!gov->tier3_overridden) {
+        gov->tier3_threshold_ms = deadline_ms * 0.92;
+    }
+}
+
+void dynamic_governor_set_framerate(dynamic_governor_t *gov, double fps)
+{
+    if (!gov || fps <= 0.0) return;
+    dynamic_governor_set_deadline_ms(gov, 1000.0 / fps);
+}
+
+double dynamic_governor_get_deadline_ms(const dynamic_governor_t *gov)
+{
+    return gov ? gov->frame_deadline_ms : 16.666667;
+}
+
+uint32_t dynamic_governor_get_dropped_frames_prevented(const dynamic_governor_t *gov)
+{
+    return gov ? gov->dropped_frames_prevented : 0;
+}
+
 governor_tier_t dynamic_governor_update(dynamic_governor_t *gov, double gpu_latency_ms)
 {
     if (!gov) return GOV_TIER_0_GPU_FULL;
@@ -175,6 +219,7 @@ governor_tier_t dynamic_governor_update(dynamic_governor_t *gov, double gpu_late
         gpu_latency_ms = 0.0;
     }
 
+    double latency_velocity = (gov->last_latency_ms > 0.0) ? (gpu_latency_ms - gov->last_latency_ms) : 0.0;
     gov->last_latency_ms = gpu_latency_ms;
     gov->total_frames++;
     gov->frames_in_tier++;
@@ -188,6 +233,13 @@ governor_tier_t dynamic_governor_update(dynamic_governor_t *gov, double gpu_late
 
     double metric = gov->ema_latency_ms;
 
+    /* Predictive velocity pacing: if latency is accelerating steeply under 3D game contention,
+     * project impending deadline breach and shift gears before the frame deadline is missed */
+    if (gov->predictive_pacing_enabled && latency_velocity > 1.5 && gpu_latency_ms >= gov->tier1_threshold_ms) {
+        double predicted = gov->ema_latency_ms + 0.5 * latency_velocity;
+        if (predicted > metric) metric = predicted;
+    }
+
     /* Emergency spike trip-wire: single frame over threshold triggers failover.
      * Deliberately NOT subject to the dwell gate below: dropping a frame
      * removes work rather than moving it elsewhere, so it cannot make a
@@ -199,6 +251,7 @@ governor_tier_t dynamic_governor_update(dynamic_governor_t *gov, double gpu_late
         } else {
             gov->current_tier = gov->cpu_offload_enabled ? GOV_TIER_2_CPU_OFFLOAD : GOV_TIER_1_GPU_FAST;
         }
+        gov->dropped_frames_prevented++;
         gov->stable_frames_count = 0;
         gov->frames_in_tier = 1;
     } else if (gov->current_tier == GOV_TIER_3_FAILOVER) {
@@ -236,6 +289,7 @@ governor_tier_t dynamic_governor_update(dynamic_governor_t *gov, double gpu_late
         }
         if (gov->current_tier < target_tier) {
             gov->current_tier = target_tier;
+            gov->dropped_frames_prevented++;
             gov->stable_frames_count = 0;
             gov->frames_in_tier = 1;
         } else {
@@ -343,4 +397,6 @@ void dynamic_governor_get_stats(const dynamic_governor_t *gov, governor_stats_t 
     out_stats->ema_latency_ms = gov->ema_latency_ms;
     out_stats->last_latency_ms = gov->last_latency_ms;
     out_stats->current_tier = gov->current_tier;
+    out_stats->frame_deadline_ms = gov->frame_deadline_ms;
+    out_stats->dropped_frames_prevented = gov->dropped_frames_prevented;
 }

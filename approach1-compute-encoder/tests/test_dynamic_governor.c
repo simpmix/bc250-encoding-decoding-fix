@@ -11,7 +11,9 @@
 #include <stdint.h>
 #include <string.h>
 #include <assert.h>
+#include <math.h>
 #include "dynamic_governor.h"
+#include "telemetry.h"
 
 static void test_governor_transitions(void)
 {
@@ -252,6 +254,110 @@ static void test_governor_telemetry_stats(void)
     printf("  ✓ Governor telemetry stats & tier names verified!\n");
 }
 
+static void test_governor_deadline_and_predictive_pacing(void)
+{
+    printf("[TEST] Testing Governor v2 deadline scaling & predictive velocity pacing...\n");
+
+    dynamic_governor_t gov;
+    dynamic_governor_init(&gov);
+
+    /* 1. Test 60 FPS deadline scaling */
+    dynamic_governor_set_framerate(&gov, 60.0);
+    assert(fabs(dynamic_governor_get_deadline_ms(&gov) - 16.666667) < 0.01);
+    assert(fabs(gov.tier1_threshold_ms - 7.50) < 0.05);
+    assert(fabs(gov.tier2_threshold_ms - 10.83) < 0.05);
+    assert(fabs(gov.tier3_threshold_ms - 15.33) < 0.05);
+
+    /* 2. Test 120 FPS deadline scaling */
+    dynamic_governor_set_framerate(&gov, 120.0);
+    assert(fabs(dynamic_governor_get_deadline_ms(&gov) - 8.333333) < 0.01);
+    assert(fabs(gov.tier1_threshold_ms - 3.75) < 0.05);
+    assert(fabs(gov.tier2_threshold_ms - 5.42) < 0.05);
+    assert(fabs(gov.tier3_threshold_ms - 7.67) < 0.05);
+
+    /* 3. Test 90 FPS deadline scaling */
+    dynamic_governor_set_framerate(&gov, 90.0);
+    assert(fabs(dynamic_governor_get_deadline_ms(&gov) - 11.111111) < 0.01);
+    assert(fabs(gov.tier1_threshold_ms - 5.00) < 0.05);
+
+    /* 4. Test predictive velocity pacing at 60 FPS */
+    dynamic_governor_reset(&gov);
+    dynamic_governor_set_framerate(&gov, 60.0);
+    assert(gov.dropped_frames_prevented == 0);
+
+    /* Baseline frame at 6.0ms */
+    governor_tier_t t0 = dynamic_governor_update(&gov, 6.0);
+    assert(t0 == GOV_TIER_0_GPU_FULL);
+    assert(gov.dropped_frames_prevented == 0);
+
+    /* Sudden contention jump: 6.0ms -> 8.5ms (velocity = +2.5ms).
+     * Standard EMA is 0.75*6.0 + 0.25*8.5 = 6.625ms (< 7.5ms Tier 1 threshold).
+     * Predictive pacing projects EMA + 0.5*velocity = 6.625 + 1.25 = 7.875ms,
+     * immediately shifting to Tier 1 and recording dropped frame prevented. */
+    governor_tier_t t1 = dynamic_governor_update(&gov, 8.5);
+    assert(t1 == GOV_TIER_1_GPU_FAST);
+    assert(dynamic_governor_get_dropped_frames_prevented(&gov) == 1);
+
+    printf("  ✓ Governor v2 deadline scaling & predictive velocity pacing verified!\n");
+}
+
+static void test_telemetry_subsystem(void)
+{
+    printf("[TEST] Testing shared memory telemetry subsystem...\n");
+
+    int init_rc = bc250_telemetry_init();
+    assert(init_rc == 0);
+    assert(bc250_telemetry_get_path() != NULL);
+
+    bc250_telemetry_data_t snapshot;
+    memset(&snapshot, 0, sizeof(snapshot));
+    snapshot.magic = BC250_TELEMETRY_MAGIC;
+    snapshot.version = BC250_TELEMETRY_VERSION;
+    snapshot.pid = 4242;
+    strncpy(snapshot.process_name, "sunshine", sizeof(snapshot.process_name) - 1);
+    snapshot.last_gpu_latency_ms = 5.25;
+    snapshot.ema_gpu_latency_ms = 5.10;
+    snapshot.frame_deadline_ms = 16.67;
+    snapshot.is_async_compute = 1;
+    snapshot.compute_queue_family = 1;
+    snapshot.current_tier = (uint32_t)GOV_TIER_0_GPU_FULL;
+    strncpy(snapshot.tier_name, "GPU Full ME", sizeof(snapshot.tier_name) - 1);
+    snapshot.total_frames = 120;
+    snapshot.tier0_frames = 120;
+    snapshot.dropped_frames_prevented = 3;
+    snapshot.target_fps = 60.0;
+    snapshot.measured_fps = 59.95;
+    snapshot.target_bitrate = 25000000;
+    snapshot.current_qp = 22;
+    snapshot.jitter_smoothing_active = 1;
+
+    bc250_telemetry_update(&snapshot);
+
+    bc250_telemetry_data_t read_back;
+    memset(&read_back, 0, sizeof(read_back));
+    int read_rc = bc250_telemetry_read(&read_back);
+    assert(read_rc == 0);
+    assert(read_back.magic == BC250_TELEMETRY_MAGIC);
+    assert(read_back.version == BC250_TELEMETRY_VERSION);
+    assert(read_back.pid == 4242);
+    assert(strcmp(read_back.process_name, "sunshine") == 0);
+    assert(read_back.is_async_compute == 1);
+    assert(read_back.compute_queue_family == 1);
+    assert(read_back.dropped_frames_prevented == 3);
+    assert(read_back.current_qp == 22);
+    assert(read_back.jitter_smoothing_active == 1);
+    assert(fabs(read_back.last_gpu_latency_ms - 5.25) < 0.001);
+    assert((read_back.sequence & 1) == 0); /* Even sequence indicates stable seqlock */
+
+    /* Verify ASCII human-readable header in byte 0..255 */
+    assert(strstr(read_back.text_summary, "[BC-250]") != NULL);
+    assert(strstr(read_back.text_summary, "sunshine") != NULL);
+    assert(strstr(read_back.text_summary, "Async Compute") != NULL);
+
+    bc250_telemetry_close();
+    printf("  ✓ Telemetry subsystem verified!\n");
+}
+
 int main(void)
 {
     /* The governor is off unless a live streaming server runs it; these
@@ -268,6 +374,8 @@ int main(void)
     test_governor_failover_handled();
     test_governor_negative_latency();
     test_governor_telemetry_stats();
+    test_governor_deadline_and_predictive_pacing();
+    test_telemetry_subsystem();
 
     printf("\nALL DYNAMIC GOVERNOR TESTS PASSED!\n");
     return 0;

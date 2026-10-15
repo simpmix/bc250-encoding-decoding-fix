@@ -117,6 +117,20 @@ void rc_init(rate_control_t *rc, rc_mode_t mode, uint32_t bitrate, double fps,
     rc->debt = 0.0;
     rc->pixels = (double)width * (double)height;
 
+    /* Low-latency jitter smoothing & sudden drop adaptation */
+    rc->jitter_smoothing_enabled = (mode == RC_LOW_LATENCY) ? 1 : 0;
+    const char *env_js = getenv("BC250_RC_JITTER_SMOOTHING");
+    if (env_js) {
+        if (strcmp(env_js, "1") == 0 || strcmp(env_js, "true") == 0) rc->jitter_smoothing_enabled = 1;
+        else if (strcmp(env_js, "0") == 0 || strcmp(env_js, "false") == 0) rc->jitter_smoothing_enabled = 0;
+    }
+    rc->jitter_burst_cap_bits = 0;
+    rc->recent_bits_idx = 0;
+    rc->recent_bits_count = 0;
+    rc->ema_frame_bits = 0.0;
+    rc->bandwidth_drops_handled = 0;
+    for (int i = 0; i < 8; i++) rc->recent_frame_bits[i] = 0;
+
     /* Diagnostic (BC250_DEBUG_RC=1): every rc_init with the target it was
      * actually handed and the base QP that fell out of it. Added while
      * root-causing "requested bitrate has no effect on output" - see
@@ -153,6 +167,23 @@ void rc_update_bitrate(rate_control_t *rc, uint32_t bitrate, uint32_t width, uin
         if (rc->buffer_fullness < 0) rc->buffer_fullness = 0;
     } else {
         rc->buffer_fullness = rc->buffer_size / 2;
+    }
+
+    /* Sudden network bandwidth drop handling:
+     * When bitrate drops significantly (>=25% drop, ratio <= 0.75),
+     * flush accumulated positive integral error and scale debt to prevent
+     * packet bursts and buffer overflow on network streaming connections. */
+    if (ratio < 0.75) {
+        if (rc->error_integral > 0) {
+            rc->error_integral = (int64_t)((double)rc->error_integral * ratio);
+        }
+        if (rc->debt > 0.0) {
+            rc->debt = rc->debt * ratio;
+        }
+        if (rc->jitter_smoothing_enabled) {
+            rc->jitter_burst_cap_bits = (uint32_t)((double)rc->target_bits_per_frame * 1.30);
+        }
+        rc->bandwidth_drops_handled++;
     }
 
     int new_base = rc_estimate_base_qp(rc->target_bitrate, rc->framerate, width, height);
@@ -235,12 +266,25 @@ int rc_get_frame_qp(rate_control_t *rc, uint64_t est_sad) {
     }
 
     /* Max frame size constraint: if per-frame budget is close to or exceeds max_frame_bits, bias QP higher */
-    if (rc->max_frame_bits > 0 && rc->target_bits_per_frame > 0) {
-        if (rc->target_bits_per_frame > rc->max_frame_bits) {
+    uint32_t active_cap = rc->max_frame_bits;
+    if (rc->jitter_smoothing_enabled && rc->jitter_burst_cap_bits > 0) {
+        if (active_cap == 0 || rc->jitter_burst_cap_bits < active_cap) {
+            active_cap = rc->jitter_burst_cap_bits;
+        }
+    }
+    if (active_cap > 0 && rc->target_bits_per_frame > 0) {
+        if (rc->target_bits_per_frame > active_cap) {
             qp_adjust += 2;
-        } else if (rc->max_frame_bits < (rc->target_bits_per_frame * 3 / 2)) {
+        } else if (active_cap < (rc->target_bits_per_frame * 3 / 2)) {
             qp_adjust += 1;
         }
+    }
+
+    /* Low-latency jitter smoothing: if recent frame sizes exceed 1.35x target bit quota,
+     * add gentle +1 QP bias to smooth packet delivery without abrupt macroblocking */
+    if (rc->jitter_smoothing_enabled && rc->target_bits_per_frame > 0 &&
+        rc->ema_frame_bits > (double)rc->target_bits_per_frame * 1.35) {
+        qp_adjust += 1;
     }
 
     /* Clamp maximum single-frame QP delta to prevent visual pulsation.
@@ -379,6 +423,22 @@ void rc_update_stats(rate_control_t *rc, int bits_used) {
     } else if (rc->buffer_fullness > rc->buffer_size) {
         rc->buffer_fullness = rc->buffer_size;
     }
+
+    if (rc->jitter_smoothing_enabled) {
+        rc->recent_frame_bits[rc->recent_bits_idx] = (uint32_t)(bits_used > 0 ? bits_used : 0);
+        rc->recent_bits_idx = (rc->recent_bits_idx + 1) % 8;
+        if (rc->recent_bits_count < 8) rc->recent_bits_count++;
+        rc->ema_frame_bits = (rc->ema_frame_bits <= 0.0) ? (double)bits_used :
+                             (0.80 * rc->ema_frame_bits + 0.20 * (double)bits_used);
+        /* Decay temporary jitter burst cap gradually back toward unconstrained */
+        if (rc->jitter_burst_cap_bits > 0 && rc->target_bits_per_frame > 0) {
+            if (rc->jitter_burst_cap_bits < rc->target_bits_per_frame * 2) {
+                rc->jitter_burst_cap_bits = (uint32_t)((double)rc->jitter_burst_cap_bits * 1.05);
+            } else {
+                rc->jitter_burst_cap_bits = 0;
+            }
+        }
+    }
 }
 
 void rc_set_max_frame_size(rate_control_t *rc, uint32_t max_frame_bits) {
@@ -401,6 +461,22 @@ void rc_set_quality_level(rate_control_t *rc, uint32_t quality_level) {
 
 uint32_t rc_get_quality_level(const rate_control_t *rc) {
     return rc ? rc->quality_level : 4;
+}
+
+void rc_set_jitter_smoothing(rate_control_t *rc, int enable) {
+    if (rc) rc->jitter_smoothing_enabled = enable ? 1 : 0;
+}
+
+int rc_get_jitter_smoothing(const rate_control_t *rc) {
+    return rc ? rc->jitter_smoothing_enabled : 0;
+}
+
+void rc_notify_network_congestion(rate_control_t *rc, double drop_ratio) {
+    if (!rc || drop_ratio <= 0.0) return;
+    if (drop_ratio > 0.90) drop_ratio = 0.90;
+    uint32_t new_rate = (uint32_t)((double)rc->target_bitrate * (1.0 - drop_ratio));
+    if (new_rate < 500000) new_rate = 500000;
+    rc_update_bitrate(rc, new_rate, 0, 0);
 }
 
 /* ------------------------------------------------ model-based QP */

@@ -145,6 +145,9 @@ else
     ctest --output-on-failure || echo -e "${YELLOW}Note: Some Vulkan display tests may skip if running in headless terminal.${NC}"
     
     $SUDO make install
+    if [ -f "$BUILD_DIR/bc250_stats" ]; then
+        $SUDO cp -f "$BUILD_DIR/bc250_stats" /usr/local/bin/ 2>/dev/null || true
+    fi
     cd "$SCRIPT_DIR"
 fi
 

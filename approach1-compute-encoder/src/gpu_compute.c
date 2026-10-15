@@ -1073,11 +1073,15 @@ int bc250_gpu_init(bc250_gpu_context_t *ctx) {
     /* 1. Prioritize dedicated hardware async compute queue (ACE - Asynchronous
      * Compute Engine, present across GCN and RDNA architectures). */
     ctx->compute_queue_family = (uint32_t)-1;
+    ctx->is_async_compute = false;
+    ctx->async_compute_queue_family = (uint32_t)-1;
     for (uint32_t i = 0; i < qf_count; i++) {
         if ((qf_props[i].queueFlags & VK_QUEUE_COMPUTE_BIT) &&
             !(qf_props[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
             ctx->compute_queue_family = i;
-            fprintf(stderr, "[bc250-gpu] Using dedicated async compute queue family %u\n", i);
+            ctx->is_async_compute = true;
+            ctx->async_compute_queue_family = i;
+            fprintf(stderr, "[bc250-gpu] Using dedicated async compute queue family %u (ACE engine)\n", i);
             break;
         }
     }
@@ -1086,6 +1090,7 @@ int bc250_gpu_init(bc250_gpu_context_t *ctx) {
         for (uint32_t i = 0; i < qf_count; i++) {
             if (qf_props[i].queueFlags & VK_QUEUE_COMPUTE_BIT) {
                 ctx->compute_queue_family = i;
+                ctx->is_async_compute = false;
                 fprintf(stderr, "[bc250-gpu] Using general compute queue family %u\n", i);
                 break;
             }
@@ -3744,6 +3749,14 @@ int gpu_compute_submitted_slot(gpu_context_t *ctx) {
     /* end_picture() toggles current_buf AFTER submitting, so the slot holding
      * the frame just submitted is the one current_buf now points away from. */
     return (ctx->current_buf + 1) % 2;
+}
+
+bool gpu_compute_is_async_compute(const gpu_context_t *ctx) {
+    return ctx ? ctx->is_async_compute : false;
+}
+
+uint32_t gpu_compute_get_queue_family(const gpu_context_t *ctx) {
+    return ctx ? ctx->compute_queue_family : (uint32_t)-1;
 }
 
 /* Slot-explicit readback. A pipelined caller MUST use these and pass the slot

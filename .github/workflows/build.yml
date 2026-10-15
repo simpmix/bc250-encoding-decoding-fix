@@ -176,6 +176,7 @@ jobs:
         # Copy installer, tools, docs, and audio fix
         cp build_and_install.sh dist/bc250-driver/
         cp -r tools dist/bc250-driver/
+        cp approach1-compute-encoder/build/bc250_stats dist/bc250-driver/tools/ 2>/dev/null || true
         cp -r audio-fix dist/bc250-driver/
         cp -r docs dist/bc250-driver/ 2>/dev/null || true
         cp README.md dist/bc250-driver/

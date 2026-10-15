@@ -135,6 +135,54 @@ static void test_rate_control_cqp_and_vbr(void) {
     printf("[test_encode] Rate Control CQP and VBR tests passed.\n");
 }
 
+static void test_rate_control_low_latency_and_jitter(void) {
+    printf("[test_encode] Testing Low-Latency Rate Control, Jitter Smoothing, and Sudden Drop Adaptation...\n");
+
+    rate_control_t rc;
+    /* In RC_LOW_LATENCY mode, jitter smoothing is enabled by default */
+    rc_init(&rc, RC_LOW_LATENCY, 10000000, 60.0, 1920, 1080);
+    assert(rc.jitter_smoothing_enabled == 1);
+    assert(rc_get_jitter_smoothing(&rc) == 1);
+
+    /* Test toggling jitter smoothing */
+    rc_set_jitter_smoothing(&rc, 0);
+    assert(rc_get_jitter_smoothing(&rc) == 0);
+    rc_set_jitter_smoothing(&rc, 1);
+    assert(rc_get_jitter_smoothing(&rc) == 1);
+
+    /* Simulate sudden network bandwidth drop: 10 Mbps -> 4 Mbps (drop 60%, ratio 0.40) */
+    rc.error_integral = 200000;
+    rc.debt = 150000.0;
+    assert(rc.bandwidth_drops_handled == 0);
+
+    /* Trigger network congestion notification with 60% drop */
+    rc_notify_network_congestion(&rc, 0.60);
+    assert(rc.bandwidth_drops_handled == 1);
+    assert(rc.target_bitrate == 4000000);
+    /* Error integral and debt should have been scaled down by ratio (0.40) to prevent packet bursts */
+    assert(rc.error_integral == (int64_t)(200000 * 0.40));
+    assert(rc.debt == 150000.0 * 0.40);
+    assert(rc.jitter_burst_cap_bits > 0);
+
+    /* Test jitter smoothing EMA filter on large frame burst */
+    rate_control_t rc_jitter;
+    rc_init(&rc_jitter, RC_LOW_LATENCY, 6000000, 60.0, 1920, 1080);
+    uint32_t target_bits = rc_jitter.target_bits_per_frame; /* 100000 */
+    int base_qp = rc_get_frame_qp(&rc_jitter, 0);
+
+    /* Simulate consecutive oversized frame bursts (1.8x target budget) */
+    for (int i = 0; i < 5; i++) {
+        rc_update_stats(&rc_jitter, (int)(target_bits * 1.8));
+    }
+    assert(rc_jitter.ema_frame_bits > (double)target_bits * 1.35);
+
+    /* With jitter smoothing, elevated EMA adds gentle +1 QP bias to smooth packet delivery */
+    int smoothed_qp = rc_get_frame_qp(&rc_jitter, 0);
+    assert(smoothed_qp >= base_qp);
+
+    printf("[test_encode] Low-Latency Rate Control and Jitter Smoothing tests passed.\n");
+}
+
 static void test_setenv(const char *name, const char *val) {
 #ifdef _WIN32
     char buf[256];
@@ -356,6 +404,7 @@ int main(void) {
 
     test_intra16_dc_transpose();
     test_rate_control_cqp_and_vbr();
+    test_rate_control_low_latency_and_jitter();
     test_multislice_parallel_encoding();
     test_slice_boundary_intra_sanitization();
 

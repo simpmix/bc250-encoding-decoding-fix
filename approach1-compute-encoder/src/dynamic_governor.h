@@ -32,6 +32,8 @@ typedef struct {
     double ema_latency_ms;
     double last_latency_ms;
     governor_tier_t current_tier;
+    double frame_deadline_ms;      /* Real-time frame deadline: 16.67ms (60fps), 8.33ms (120fps), etc. */
+    uint32_t dropped_frames_prevented;
 } governor_stats_t;
 
 typedef struct {
@@ -45,9 +47,15 @@ typedef struct {
     uint32_t total_offload_frames;
     uint32_t total_failover_frames;
     int stats_log_interval;        /* 0: disabled, >0: log every N frames */
+    double frame_deadline_ms;      /* Real-time frame deadline: 16.67ms (60fps), 8.33ms (120fps), etc. */
     double tier1_threshold_ms;     /* Default: 8.0 ms */
     double tier2_threshold_ms;     /* Default: 12.0 ms */
     double tier3_threshold_ms;     /* Default: 15.5 ms */
+    bool tier1_overridden;
+    bool tier2_overridden;
+    bool tier3_overridden;
+    bool predictive_pacing_enabled; /* Predictive velocity-aware contention pacing */
+    uint32_t dropped_frames_prevented;
     uint32_t step_down_hysteresis; /* Default: 4 frames */
     /* Minimum frames a tier must have been held before the governor may move
      * *up* into the CPU offload tier. Default 0 (no dwell) generally, 8 for a
@@ -77,6 +85,27 @@ typedef struct {
  * Initializes the dynamic governor with default thresholds and hysteresis.
  */
 void dynamic_governor_init(dynamic_governor_t *gov);
+
+/**
+ * Sets stream framerate and dynamically scales Governor v2 thresholds
+ * to match the real-time frame budget (e.g. 16.6ms @ 60fps, 8.3ms @ 120fps).
+ */
+void dynamic_governor_set_framerate(dynamic_governor_t *gov, double fps);
+
+/**
+ * Sets explicit frame deadline in milliseconds.
+ */
+void dynamic_governor_set_deadline_ms(dynamic_governor_t *gov, double deadline_ms);
+
+/**
+ * Gets the active frame deadline in milliseconds.
+ */
+double dynamic_governor_get_deadline_ms(const dynamic_governor_t *gov);
+
+/**
+ * Returns total count of dropped frames prevented by governor pacing.
+ */
+uint32_t dynamic_governor_get_dropped_frames_prevented(const dynamic_governor_t *gov);
 
 /**
  * Updates governor with the measured GPU frame completion latency.

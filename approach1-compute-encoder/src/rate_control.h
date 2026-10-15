@@ -67,6 +67,15 @@ typedef struct {
     int      still_last_qp;   /* 0 = none since the last moving picture */
     double   still_share;     /* of recent P pictures, the share that were still */
     double   pixels;          /* per picture, for the first guess */
+
+    /* Low-Latency Jitter Smoothing & Sudden Drop Adaptation */
+    int      jitter_smoothing_enabled; /* 1 = active (default in RC_LOW_LATENCY) */
+    uint32_t jitter_burst_cap_bits;    /* dynamically calculated burst ceiling */
+    uint32_t recent_frame_bits[8];     /* rolling window of recent frame sizes */
+    int      recent_bits_idx;
+    int      recent_bits_count;
+    double   ema_frame_bits;           /* EMA of recent frame sizes */
+    uint32_t bandwidth_drops_handled;  /* telemetry counter */
 } rate_control_t;
 
 void rc_init(rate_control_t *rc, rc_mode_t mode, uint32_t bitrate, double fps,
@@ -86,5 +95,10 @@ void rc_set_max_frame_size(rate_control_t *rc, uint32_t max_frame_bits);
 uint32_t rc_get_max_frame_size(const rate_control_t *rc);
 void rc_set_quality_level(rate_control_t *rc, uint32_t quality_level);
 uint32_t rc_get_quality_level(const rate_control_t *rc);
+
+/* Low-latency jitter smoothing controls */
+void rc_set_jitter_smoothing(rate_control_t *rc, int enable);
+int  rc_get_jitter_smoothing(const rate_control_t *rc);
+void rc_notify_network_congestion(rate_control_t *rc, double drop_ratio);
 
 #endif

@@ -69,6 +69,7 @@
 #include "hevc_cabac.h"
 #include "hevc_intra.h"
 #include "hevc_inter.h"
+#include "telemetry.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1808,6 +1809,22 @@ static int encode_core(hevc_encoder_t *encoder, uint8_t *output_buf, size_t outp
     }
 
     encoder->frame_count++;
+
+    bc250_telemetry_data_t telem = {0};
+    telem.target_fps = (double)encoder->fps;
+    telem.measured_fps = encoder->rc.measured_fps > 0 ? encoder->rc.measured_fps : (double)encoder->fps;
+    telem.target_bitrate = encoder->rc.target_bitrate;
+    telem.current_qp = (uint32_t)encoder->qp;
+    telem.buffer_fullness = encoder->rc.buffer_fullness;
+    telem.jitter_smoothing_active = (uint32_t)encoder->rc.jitter_smoothing_enabled;
+    telem.total_frames = encoder->frame_count;
+    if (encoder->gpu) {
+        telem.last_gpu_latency_ms = encoder->gpu->last_gpu_duration_ms;
+        telem.is_async_compute = encoder->gpu->is_async_compute ? 1 : 0;
+        telem.compute_queue_family = encoder->gpu->compute_queue_family;
+    }
+    bc250_telemetry_update(&telem);
+
     return (int)total;
 }
 
@@ -1908,12 +1925,13 @@ int hevc_encoder_encode_frame(hevc_encoder_t *encoder,
                 gpu_compute_begin_picture(gpu_ctx, input_surface);
                 gpu_compute_dispatch_hevc_pipeline(gpu_ctx, input_surface, (int)encoder->width, (int)encoder->height, encoder->qp, is_idr ? 1 : 0);
                 gpu_compute_end_picture(gpu_ctx);
-                gpu_compute_sync(gpu_ctx);
+                int slot = gpu_compute_submitted_slot(gpu_ctx);
+                gpu_compute_sync_slot(gpu_ctx, slot);
 
                 if (!is_idr && encoder->has_ref) {
                     void *mv_data = NULL;
                     size_t mv_size = 0;
-                    if (gpu_compute_get_mv_staging_data(gpu_ctx, &mv_data, &mv_size) == 0 && mv_data) {
+                    if (gpu_compute_get_mv_staging_data_slot(gpu_ctx, slot, &mv_data, &mv_size) == 0 && mv_data) {
                         size_t total_cus = ((size_t)encoder->coded_width / HEVC_CU_SIZE) * (encoder->coded_height / HEVC_CU_SIZE);
                         size_t max_bytes = total_cus * sizeof(gpu_mv_t);
                         size_t copy_bytes = (mv_size < max_bytes) ? mv_size : max_bytes;
@@ -1925,12 +1943,13 @@ int hevc_encoder_encode_frame(hevc_encoder_t *encoder,
                 gpu_compute_begin_picture(gpu_ctx, input_surface);
                 gpu_compute_dispatch_hevc_me(gpu_ctx, input_surface, (int)encoder->width, (int)encoder->height, is_idr ? 1 : 0);
                 gpu_compute_end_picture(gpu_ctx);
-                gpu_compute_sync(gpu_ctx);
+                int slot = gpu_compute_submitted_slot(gpu_ctx);
+                gpu_compute_sync_slot(gpu_ctx, slot);
 
                 if (!is_idr && encoder->has_ref) {
                     void *mv_data = NULL;
                     size_t mv_size = 0;
-                    if (gpu_compute_get_mv_staging_data(gpu_ctx, &mv_data, &mv_size) == 0 && mv_data) {
+                    if (gpu_compute_get_mv_staging_data_slot(gpu_ctx, slot, &mv_data, &mv_size) == 0 && mv_data) {
                         size_t total_cus = ((size_t)encoder->coded_width / HEVC_CU_SIZE) * (encoder->coded_height / HEVC_CU_SIZE);
                         size_t max_bytes = total_cus * sizeof(gpu_mv_t);
                         size_t copy_bytes = (mv_size < max_bytes) ? mv_size : max_bytes;

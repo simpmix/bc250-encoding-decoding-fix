@@ -30,6 +30,7 @@ extern char *program_invocation_short_name;
 #include "gpu_compute.h"
 #include "cpu_simd_me.h"
 #include "dynamic_governor.h"
+#include "telemetry.h"
 #include "encoder_h264.h"
 #ifdef BC250_HAVE_X264
 #include "encoder_x264.h"
@@ -2005,6 +2006,7 @@ h264_encoder_t *h264_encoder_create(bc250_gpu_context_t *gpu_ctx,
     }
 
     dynamic_governor_init(&encoder->governor);
+    dynamic_governor_set_framerate(&encoder->governor, (double)encoder->fps);
     cpu_simd_me_config_init(&encoder->me_cfg, width, height);
     encoder->cpu_mvs = calloc(encoder->total_mbs, sizeof(gpu_mv_t));
     encoder->cpu_mvs_cap = encoder->total_mbs;
@@ -2148,6 +2150,7 @@ void h264_encoder_set_fps(h264_encoder_t *encoder, uint32_t fps) {
         encoder->fps = fps;
         rc_init(&encoder->rc, encoder->rc.mode, encoder->rc.target_bitrate,
                 (double)fps, encoder->width, encoder->height);
+        dynamic_governor_set_framerate(&encoder->governor, (double)fps);
     }
 }
 
@@ -3526,6 +3529,32 @@ int h264_encoder_finish_frame(h264_encoder_t *encoder,
     encoder->frame_num++;
     encoder->poc += 2;
     encoder->frame_count++;
+
+    bc250_telemetry_data_t telem = {0};
+    telem.last_gpu_latency_ms = encoder->governor.last_latency_ms;
+    telem.ema_gpu_latency_ms = encoder->governor.ema_latency_ms;
+    telem.frame_deadline_ms = encoder->governor.frame_deadline_ms;
+    telem.current_tier = (uint32_t)encoder->governor.current_tier;
+    const char *tname = dynamic_governor_tier_name(encoder->governor.current_tier);
+    if (tname) strncpy(telem.tier_name, tname, sizeof(telem.tier_name) - 1);
+    telem.total_frames = encoder->governor.total_frames;
+    telem.tier0_frames = encoder->governor.total_tier0_frames;
+    telem.tier1_frames = encoder->governor.total_tier1_frames;
+    telem.offload_frames = encoder->governor.total_offload_frames;
+    telem.failover_frames = encoder->governor.total_failover_frames;
+    telem.dropped_frames_prevented = encoder->governor.dropped_frames_prevented;
+    telem.target_fps = (double)encoder->fps;
+    telem.measured_fps = encoder->rc.measured_fps > 0 ? encoder->rc.measured_fps : (double)encoder->fps;
+    telem.target_bitrate = encoder->rc.target_bitrate;
+    telem.current_qp = (uint32_t)qp;
+    telem.buffer_fullness = encoder->rc.buffer_fullness;
+    telem.jitter_smoothing_active = (uint32_t)encoder->rc.jitter_smoothing_enabled;
+    if (gpu_ctx) {
+        telem.is_async_compute = gpu_ctx->is_async_compute ? 1 : 0;
+        telem.compute_queue_family = gpu_ctx->compute_queue_family;
+        telem.double_buffered_slot = (uint32_t)pending->gpu_slot;
+    }
+    bc250_telemetry_update(&telem);
 
     if (perf_stats) {
         struct timespec frame_t1;

@@ -71,6 +71,8 @@ typedef struct bc250_gpu_context {
     VkDevice device;
     VkQueue compute_queue;
     uint32_t compute_queue_family;
+    bool is_async_compute;              /* True if dedicated ACE hardware async compute queue active */
+    uint32_t async_compute_queue_family; /* Dedicated async compute queue family index */
     VkCommandPool cmd_pool;
     VkDescriptorPool desc_pool;
     
@@ -370,6 +372,8 @@ typedef bc250_gpu_context_t gpu_context_t;
 /* Core lifecycle */
 int bc250_gpu_init(bc250_gpu_context_t *ctx);
 void bc250_gpu_destroy(bc250_gpu_context_t *ctx);
+bool gpu_compute_is_async_compute(const gpu_context_t *ctx);
+uint32_t gpu_compute_get_queue_family(const gpu_context_t *ctx);
 
 /* Prints this device's Compute-Unit topology and the exact `AMD_CU_MASK`
  * values that would ring-fence part of it away from a game, to stderr.
