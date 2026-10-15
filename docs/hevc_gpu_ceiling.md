@@ -4,8 +4,6 @@
 **Hardware:** AMD BC-250 APU (Oberon / Cyan Skillfish, 40 Compute Units RDNA 1.5, 16 threads Zen 2)  
 **Status:** ARCHITECTURAL_CEILING_REACHED
 
----
-
 ## 1. Provas Matemáticas dos Limites Físicos Atingidos
 
 ### A. Limite da GPU em 30 FPS (Capacidade Excedente de 9x)
@@ -25,8 +23,6 @@
 - A captura de tela do monitor nativo de 2560x1600 via PipeWire/Mutter e a renderização da interface gráfica do OBS Studio a 60 Hz consomem entre **5% e 8% de CPU** mesmo quando nenhuma gravação está ativa.
 - Esse consumo é inerente ao compositor de janelas do sistema operacional e independe do driver de aceleração de vídeo.
 
----
-
 ## 2. Balanço Final de Uso de Recursos no OBS Studio (1080p30)
 
 | Subsistema | Consumo de CPU | Responsável | Status de Otimização |
@@ -37,8 +33,6 @@
 | **Codificador HEVC (CABAC + WPP Threads)** | ~9–11% | Driver BC-250 (Host CPU) | **Teto arquitetural atingido** |
 | **Estimação de Movimento, TQ, Recon** | 0% CPU (Offloaded) | **40 CUs RDNA (GPU ~9,5%)** | **100% em Vulkan Compute** |
 | **TOTAL NO PROCESSO OBS** | **~19,8%–21,2%** | Sistema + OBS + Encoder | **Ótimo global do sistema** |
-
----
 
 ## 3. Veredito Final
 A APU AMD BC-250 atinge seu equilíbrio ótimo de operação no padrão HEVC: o encoder consome cerca de 10% de CPU para o empacotamento CABAC enquanto a GPU absorve a carga de computação em Wave64, preservando **~80% da CPU Zen 2 e ~90% da GPU livres** para execução de jogos e aplicações concorrentes com zero perda de quadros (30.00/30.00 FPS estável).

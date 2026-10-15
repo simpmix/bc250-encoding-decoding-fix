@@ -9,8 +9,6 @@ Previous attempts to reuse H.264 shaders (`motion_estimation.comp`, `residual_pr
 
 This implementation delivers a dedicated Vulkan Compute pipeline tailored for HEVC on the BC-250's 40 Compute Units.
 
----
-
 ## 2. Dedicated Shaders
 
 1. **`hevc_motion_estimation.comp`**
@@ -39,8 +37,6 @@ This implementation delivers a dedicated Vulkan Compute pipeline tailored for HE
    - Sample Adaptive Offset (SAO) band offset adjustments.
    - Stores directly into GPU device-local reference surfaces.
 
----
-
 ## 3. Feature Flags & Runtime Control
 
 | Flag | Default | Description |
@@ -53,8 +49,6 @@ This implementation delivers a dedicated Vulkan Compute pipeline tailored for HE
 | `BC250_HEVC_GPU_FILTER=1` | OFF | Activates GPU Reconstruction, Deblocking, and SAO. |
 | `BC250_HEVC_FORCE_CPU=1` | OFF | Forces full CPU fallback across all stages. |
 | `BC250_HEVC_GPU_DEBUG=1` | OFF | Enables verbose dispatch and validation logging. |
-
----
 
 ## 4. Verification Evidence
 

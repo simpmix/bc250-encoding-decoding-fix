@@ -40,8 +40,6 @@ static inline uint8_t clip_uint8(int v)
 /* The six-tap filter of 8.4.2.2.1, unrounded. */
 #define TAP(a, b, c, d, e, f) ((a) - 5 * (b) + 20 * (c) + 20 * (d) - 5 * (e) + (f))
 
-static inline int media(int a, int b) { return (a + b + 1) >> 1; }
-
 /* -------------------------------------------------------------- fetching */
 
 const uint8_t *h264d_mc_fetch_luma(uint8_t *dst, int *out_stride,

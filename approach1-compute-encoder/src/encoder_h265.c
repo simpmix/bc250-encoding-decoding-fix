@@ -1007,7 +1007,6 @@ static int derive_merge_candidates_n(int cuy_min, const hevc_encoder_t *enc,
                                      int cux, int cuy, int n,
                                      hevc_mv_t cand_mvs[5]){
     uint32_t w_cu = enc->width_ctu * 2;
-    uint32_t h_cu = enc->height_ctu * 2;
 
     hevc_mv_t spatial_cand[5];
     int num_spatial = 0;

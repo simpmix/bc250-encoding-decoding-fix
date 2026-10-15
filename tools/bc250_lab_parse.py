@@ -2,8 +2,7 @@
 """
 bc250_lab_parse.py - the ONE parser for this driver's instrumentation logs.
 
-WHY THIS EXISTS
----------------
+WHY THIS EXISTS:
 The per-stage numbers in docs/DEVLOG.md §19-§21 were produced by about a
 dozen throwaway awk one-liners, each re-deriving the same parse. That went
 wrong in ways that cost real time: one of them sorted its input and destroyed
@@ -267,8 +266,11 @@ def main():
     ap.add_argument("--tag", default="", help="opaque label echoed back as the 'tag' field")
     args = ap.parse_args()
 
-    text = sys.stdin.read() if args.logfile == "-" else \
-        open(args.logfile, "r", errors="replace").read()
+    if args.logfile == "-":
+        text = sys.stdin.read()
+    else:
+        with open(args.logfile, "r", errors="replace") as fh:
+            text = fh.read()
 
     out = parse(text)
     if args.tag:

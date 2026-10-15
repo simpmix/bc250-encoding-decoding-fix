@@ -5,8 +5,6 @@
 **Ambiente:** Linux x86_64, Mesa RADV, VA-API 1.24  
 **Repositório:** `/home/lucasa/bc250-dev/repo` (Branch: `feature/hevc-gpu-full-pipeline`)
 
----
-
 ## 1. Resumo Executivo da Auditoria de Veracidade
 
 Esta auditoria cumpre rigorosamente o protocolo do **GATE 0**, confrontando as métricas declaradas anteriormente com dados empíricos coletados em hardware real através de contadores atômicos e telemetria de kernel (`/sys/class/drm/card1/device/gpu_busy_percent`).
@@ -26,8 +24,6 @@ Esta auditoria cumpre rigorosamente o protocolo do **GATE 0**, confrontando as m
    - A 1080p a 30 FPS, o shader Wave64 nas 40 CUs executa em apenas ~3,4 ms e fica ocioso nos 29 ms restantes de cada intervalo de 33,3 ms.
    - Em cargas contínuas e unthrottled, a GPU escala diretamente com a resolução e taxa de quadros, alcançando **23,7% a 27,5%** de média contínua com picos de **100%**.
 
----
-
 ## 2. Tabela de Auditoria por Etapa da Esteira (Contadores Atômicos Reais)
 
 | Etapa | Shader SPIR-V | Contador de Dispatches | Uso GPU Medido | Veredito | Observação |
@@ -38,8 +34,6 @@ Esta auditoria cumpre rigorosamente o protocolo do **GATE 0**, confrontando as m
 | **Etapa 4: Predição** | `hevc_pred.comp` | **60 / 60 quadros** | Integrado | **PARCIAL** | Inter 8-tap na GPU; intra angular na CPU |
 | **Etapa 5: Recon/SAO**| `hevc_reconstruct_sao.comp` | **60 / 60 quadros** | Ativo em VRAM | **REAL_OFFLOAD** | Quadro de referência atualizado direto na GPU |
 | **Etapa 6: CABAC** | `hevc_cabac.c` | N/A (CPU) | 0% (Host Zen 2) | **CPU_NORMATIVO** | Imposição da norma ITU-T H.265 |
-
----
 
 ## 3. Varredura Completa de Workloads em Hardware Real
 
@@ -53,8 +47,6 @@ Medições coletadas no nó `/dev/dri/renderD128` com monitoramento por telemetr
 | **1440p60** | 17,81 ms/q | 56,1 FPS | 37,8% | 12,9% | 100% |
 | **4K30** | 35,73 ms/q | 28,0 FPS | 39,8% | 22,6% | 100% |
 | **4K60** | 35,07 ms/q | 28,5 FPS | 39,4% | 24,8% | 100% |
-
----
 
 ## 4. Top Hotspots de CPU Identificados
 

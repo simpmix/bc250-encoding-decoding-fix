@@ -1003,7 +1003,7 @@ static hevc_mv_t FUNC(motion_search)(const hevc_encoder_t *enc, int cu_x, int cu
      * local polish (2 steps) instead of a 32-step CPU crawl. */
     const int cx0 = bx, cy0 = by;
     int back = -1;
-    const int max_downhill = enc->enable_gpu_me ? 2 : 32;
+    const int max_downhill = (enc->enable_gpu_me && enc->num_gpu_mvs > 0) ? 2 : 32;
     for (int step = 0; step < max_downhill; step++) {
         static const int ddx[4] = { -1, 1, 0, 0 }, ddy[4] = { 0, 0, -1, 1 };
         int nbx = bx, nby = by, nk = -1;
@@ -1284,7 +1284,8 @@ static void FUNC(decide_cu)(hevc_encoder_t *enc, hevc_cabac_t *chain, int cu_x, 
         uint32_t cu_idx = (uint32_t)cuy * stride_cus + (uint32_t)cux;
         if (cu_idx < enc->num_gpu_mvs) {
             const gpu_mv_t *gmv = &enc->gpu_mvs[cu_idx];
-            if (gmv->sad <= 96 && gmv->mvx == 0 && gmv->mvy == 0) {
+            if (gmv->sad <= 96 && gmv->mvx == 0 && gmv->mvy == 0 &&
+                cand[best_merge].x == 0 && cand[best_merge].y == 0) {
                 cd.kind = CU_SKIP;
                 memset(cd.res.cbf_y, 0, sizeof(cd.res.cbf_y));
                 cd.res.cbf_y8 = 0;

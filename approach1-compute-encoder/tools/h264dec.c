@@ -850,9 +850,9 @@ int main(int argc, char **argv)
         int n_active[2] = { 0, 0 };
 
         for (int l = 0; l < (slice_type == 1 ? 2 : 1); l++) {
-            int n = sl.num_ref_idx[l];
-            if (n > 32) n = 32;
-            n_active[l] = n;
+            int n_ref = sl.num_ref_idx[l];
+            if (n_ref > 32) n_ref = 32;
+            n_active[l] = n_ref;
 
             if (slice_type == 0) {
                 /* 8.2.4.2.1: descending PicNum, which is the order `refs`

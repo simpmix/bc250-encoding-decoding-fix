@@ -501,7 +501,7 @@ static void cavlc_write_levels(bitstream_t *bs, const int *levels, int count,
 static void cavlc_write_total_zeros(bitstream_t *bs, int max_coeff, int total_coeff, int total_zeros) {
     if (total_coeff <= 0 || total_coeff >= max_coeff) return;
     int tc_idx = total_coeff - 1;
-    if (tc_idx >= 0 && tc_idx < 15 && total_zeros >= 0 && total_zeros < 16) {
+    if (tc_idx < 15 && total_zeros >= 0 && total_zeros < 16) {
         uint8_t tz_len = total_zeros_len[tc_idx][total_zeros];
         uint8_t tz_bits = total_zeros_bits[tc_idx][total_zeros];
         if (tz_len > 0) {
@@ -518,7 +518,7 @@ static void cavlc_write_total_zeros(bitstream_t *bs, int max_coeff, int total_co
 static void cavlc_write_chroma_dc_total_zeros(bitstream_t *bs, int total_coeff, int total_zeros) {
     if (total_coeff <= 0 || total_coeff >= 4) return;
     int tc_idx = total_coeff - 1;
-    if (tc_idx >= 0 && tc_idx < 3 && total_zeros >= 0 && total_zeros < 4) {
+    if (total_zeros >= 0 && total_zeros < 4) {
         uint8_t tz_len = chroma_dc_total_zeros_len[tc_idx][total_zeros];
         uint8_t tz_bits = chroma_dc_total_zeros_bits[tc_idx][total_zeros];
         if (tz_len > 0) {

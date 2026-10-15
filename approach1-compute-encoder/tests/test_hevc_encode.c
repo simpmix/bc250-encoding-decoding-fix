@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/stat.h>
 #include <stdint.h>
 #include <string.h>
 #include <assert.h>
@@ -455,6 +456,68 @@ static void test_main10_stream(void) {
     printf("[test_hevc_encode] Main 10 stream OK.\n");
 }
 
+static void set_env_var(const char *name, const char *val) {
+#if defined(_WIN32)
+    _putenv_s(name, val);
+#else
+    setenv(name, val, 1);
+#endif
+}
+
+static void unset_env_var(const char *name) {
+#if defined(_WIN32)
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
+#endif
+}
+
+static void test_hevc_gpu_flags_and_fallback(void) {
+    printf("[test_hevc_encode] GPU flags & CPU fallback sanity...\n");
+    const uint32_t width = 128, height = 96;
+    const size_t y_size = (size_t)width * height;
+    const size_t uv_size = (size_t)width * (height / 2);
+    uint8_t *y_plane = malloc(y_size);
+    uint8_t *uv_plane = malloc(uv_size);
+    const size_t out_cap = width * height * 4 + 65536;
+    uint8_t *out_buf = malloc(out_cap);
+    assert(y_plane && uv_plane && out_buf);
+    memset(y_plane, 0x80, y_size);
+    memset(uv_plane, 0x80, uv_size);
+
+    /* 1. Test forced CPU fallback via BC250_HEVC_FORCE_CPU=1 */
+    set_env_var("BC250_HEVC_FORCE_CPU", "1");
+    hevc_encoder_t *enc_cpu = hevc_encoder_create(NULL, width, height, 30, 2000000);
+    assert(enc_cpu != NULL);
+    int written_cpu = hevc_encoder_encode_raw(enc_cpu, y_plane, (int)width, uv_plane, (int)width, out_buf, out_cap);
+    assert(written_cpu > 0);
+    hevc_encoder_destroy(enc_cpu);
+    unset_env_var("BC250_HEVC_FORCE_CPU");
+
+    /* 2. Test GPU ME opt-in flag via BC250_HEVC_GPU_ME=1 */
+    set_env_var("BC250_HEVC_GPU_ME", "1");
+    hevc_encoder_t *enc_me = hevc_encoder_create(NULL, width, height, 30, 2000000);
+    assert(enc_me != NULL);
+    int written_me = hevc_encoder_encode_raw(enc_me, y_plane, (int)width, uv_plane, (int)width, out_buf, out_cap);
+    assert(written_me > 0);
+    hevc_encoder_destroy(enc_me);
+    unset_env_var("BC250_HEVC_GPU_ME");
+
+    /* 3. Test Full Pipeline opt-in flag via BC250_HEVC_GPU_PIPELINE=1 */
+    set_env_var("BC250_HEVC_GPU_PIPELINE", "1");
+    hevc_encoder_t *enc_pipe = hevc_encoder_create(NULL, width, height, 30, 2000000);
+    assert(enc_pipe != NULL);
+    int written_pipe = hevc_encoder_encode_raw(enc_pipe, y_plane, (int)width, uv_plane, (int)width, out_buf, out_cap);
+    assert(written_pipe > 0);
+    hevc_encoder_destroy(enc_pipe);
+    unset_env_var("BC250_HEVC_GPU_PIPELINE");
+
+    free(y_plane);
+    free(uv_plane);
+    free(out_buf);
+    printf("[test_hevc_encode] GPU flags & CPU fallback OK.\n");
+}
+
 int main(void) {
     test_transform_round_trip();
     test_mpm_derivation();
@@ -464,6 +527,7 @@ int main(void) {
     test_hevc_governor();
     test_transform_round_trip_10();
     test_main10_stream();
+    test_hevc_gpu_flags_and_fallback();
 
     printf("[test_hevc_encode] ALL HEVC BITSTREAM STRUCTURE TESTS PASSED!\n");
     return 0;
