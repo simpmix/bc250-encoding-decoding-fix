@@ -307,6 +307,7 @@ governor_tier_t dynamic_governor_update(dynamic_governor_t *gov, double gpu_late
         /* Upward tier transition to Tier 1 */
         if (gov->current_tier < GOV_TIER_1_GPU_FAST) {
             gov->current_tier = GOV_TIER_1_GPU_FAST;
+            gov->dropped_frames_prevented++;
             gov->stable_frames_count = 0;
             gov->frames_in_tier = 1;
         } else {
@@ -358,6 +359,7 @@ void dynamic_governor_reset(dynamic_governor_t *gov)
     gov->last_latency_ms = 0.0;
     gov->stable_frames_count = 0;
     gov->frames_in_tier = 0;
+    gov->dropped_frames_prevented = 0;
     gov->current_tier = (gov->forced_tier >= 0) ? (governor_tier_t)gov->forced_tier : GOV_TIER_0_GPU_FULL;
 }
 
