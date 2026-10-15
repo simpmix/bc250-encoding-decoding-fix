@@ -30,11 +30,12 @@ extern char *program_invocation_short_name;
 #define HAVE_POSIX_SHM 0
 #endif
 
+#include <stdatomic.h>
+
 static char g_shm_path[256] = {0};
 static int g_shm_fd = -1;
 static bc250_telemetry_data_t *g_shm_ptr = NULL;
 static bool g_initialized = false;
-static uint32_t g_sequence = 0;
 
 static void resolve_shm_path(void) {
     if (g_shm_path[0] != '\0') return;
@@ -130,12 +131,10 @@ void bc250_telemetry_update(const bc250_telemetry_data_t *snapshot) {
     }
 
     /* Seqlock update: increment sequence to odd value before writing */
-    g_sequence = (g_sequence + 1) | 1;
-    g_shm_ptr->sequence = g_sequence;
-
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
-    __asm__ __volatile__("" ::: "memory");
-#endif
+    uint32_t seq = atomic_load_explicit((_Atomic uint32_t *)&g_shm_ptr->sequence, memory_order_relaxed);
+    seq = (seq + 1) | 1;
+    atomic_store_explicit((_Atomic uint32_t *)&g_shm_ptr->sequence, seq, memory_order_release);
+    atomic_thread_fence(memory_order_release);
 
     /* Format human-readable ASCII summary into the initial text header buffer */
     const char *pname = snapshot->process_name[0] ? snapshot->process_name : "bc250";
@@ -202,13 +201,9 @@ void bc250_telemetry_update(const bc250_telemetry_data_t *snapshot) {
     g_shm_ptr->buffer_fullness = snapshot->buffer_fullness;
     g_shm_ptr->jitter_smoothing_active = snapshot->jitter_smoothing_active;
 
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
-    __asm__ __volatile__("" ::: "memory");
-#endif
-
-    /* End seqlock update: increment sequence to even value */
-    g_sequence++;
-    g_shm_ptr->sequence = g_sequence;
+    /* End seqlock update: increment sequence to even value with release barrier */
+    atomic_thread_fence(memory_order_release);
+    atomic_store_explicit((_Atomic uint32_t *)&g_shm_ptr->sequence, seq + 1, memory_order_release);
 }
 
 int bc250_telemetry_read(bc250_telemetry_data_t *out_data) {
@@ -229,24 +224,22 @@ int bc250_telemetry_read(bc250_telemetry_data_t *out_data) {
 
     const bc250_telemetry_data_t *shm = (const bc250_telemetry_data_t *)map;
 
-    /* Seqlock read with up to 5 retries in case writer is actively updating */
-    for (int retry = 0; retry < 5; retry++) {
-        uint32_t s1 = shm->sequence;
+    /* Seqlock read with retries in case writer is actively updating */
+    for (int retry = 0; retry < 10; retry++) {
+        uint32_t s1 = atomic_load_explicit((_Atomic uint32_t *)&shm->sequence, memory_order_acquire);
         if (s1 & 1) {
             /* Writer is in the middle of writing; brief pause */
-            struct timespec pause_ts = { .tv_sec = 0, .tv_nsec = 500000 }; /* 0.5ms */
+            struct timespec pause_ts = { .tv_sec = 0, .tv_nsec = 100000 }; /* 0.1ms */
             nanosleep(&pause_ts, NULL);
             continue;
         }
 
+        atomic_thread_fence(memory_order_acquire);
         memcpy(out_data, shm, sz);
+        atomic_thread_fence(memory_order_acquire);
 
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
-        __asm__ __volatile__("" ::: "memory");
-#endif
-
-        uint32_t s2 = shm->sequence;
-        if (s1 == s2) {
+        uint32_t s2 = atomic_load_explicit((_Atomic uint32_t *)&shm->sequence, memory_order_acquire);
+        if (s1 == s2 && !(s1 & 1)) {
             munmap(map, sz);
             close(fd);
             return (out_data->magic == BC250_TELEMETRY_MAGIC) ? 0 : -1;
@@ -259,7 +252,7 @@ int bc250_telemetry_read(bc250_telemetry_data_t *out_data) {
 #else
     if (g_shm_ptr) {
         memcpy(out_data, g_shm_ptr, sizeof(bc250_telemetry_data_t));
-        return 0;
+        return (out_data->magic == BC250_TELEMETRY_MAGIC) ? 0 : -1;
     }
     return -1;
 #endif

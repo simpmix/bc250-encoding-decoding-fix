@@ -1822,6 +1822,7 @@ static int encode_core(hevc_encoder_t *encoder, uint8_t *output_buf, size_t outp
         telem.last_gpu_latency_ms = encoder->gpu->last_gpu_duration_ms;
         telem.is_async_compute = encoder->gpu->is_async_compute ? 1 : 0;
         telem.compute_queue_family = encoder->gpu->compute_queue_family;
+        telem.double_buffered_slot = (uint32_t)gpu_compute_submitted_slot(encoder->gpu);
     }
     bc250_telemetry_update(&telem);
 
@@ -1914,6 +1915,7 @@ int hevc_encoder_encode_frame(hevc_encoder_t *encoder,
     }
 
     if (gpu_ctx && input_surface.y_plane != VK_NULL_HANDLE) {
+        encoder->gpu = gpu_ctx;
         /* An eight-bit encoder reading a P010 surface, or the reverse,
          * would encode half a picture of garbage without a complaint. */
         if ((input_surface.format == GPU_IMAGE_P010) != ten_bit) return -1;
@@ -1926,36 +1928,40 @@ int hevc_encoder_encode_frame(hevc_encoder_t *encoder,
                 gpu_compute_dispatch_hevc_pipeline(gpu_ctx, input_surface, (int)encoder->width, (int)encoder->height, encoder->qp, is_idr ? 1 : 0);
                 gpu_compute_end_picture(gpu_ctx);
                 int slot = gpu_compute_submitted_slot(gpu_ctx);
-                gpu_compute_sync_slot(gpu_ctx, slot);
-
-                if (!is_idr && encoder->has_ref) {
-                    void *mv_data = NULL;
-                    size_t mv_size = 0;
-                    if (gpu_compute_get_mv_staging_data_slot(gpu_ctx, slot, &mv_data, &mv_size) == 0 && mv_data) {
-                        size_t total_cus = ((size_t)encoder->coded_width / HEVC_CU_SIZE) * (encoder->coded_height / HEVC_CU_SIZE);
-                        size_t max_bytes = total_cus * sizeof(gpu_mv_t);
-                        size_t copy_bytes = (mv_size < max_bytes) ? mv_size : max_bytes;
-                        memcpy(encoder->gpu_mvs, mv_data, copy_bytes);
-                        encoder->num_gpu_mvs = (uint32_t)(copy_bytes / sizeof(gpu_mv_t));
+                if (gpu_compute_sync_slot(gpu_ctx, slot) == 0) {
+                    if (!is_idr && encoder->has_ref) {
+                        void *mv_data = NULL;
+                        size_t mv_size = 0;
+                        if (gpu_compute_get_mv_staging_data_slot(gpu_ctx, slot, &mv_data, &mv_size) == 0 && mv_data) {
+                            size_t total_cus = ((size_t)encoder->coded_width / HEVC_CU_SIZE) * (encoder->coded_height / HEVC_CU_SIZE);
+                            size_t max_bytes = total_cus * sizeof(gpu_mv_t);
+                            size_t copy_bytes = (mv_size < max_bytes) ? mv_size : max_bytes;
+                            memcpy(encoder->gpu_mvs, mv_data, copy_bytes);
+                            encoder->num_gpu_mvs = (uint32_t)(copy_bytes / sizeof(gpu_mv_t));
+                        }
                     }
+                } else {
+                    encoder->num_gpu_mvs = 0;
                 }
             } else if (encoder->enable_gpu_me) {
                 gpu_compute_begin_picture(gpu_ctx, input_surface);
                 gpu_compute_dispatch_hevc_me(gpu_ctx, input_surface, (int)encoder->width, (int)encoder->height, is_idr ? 1 : 0);
                 gpu_compute_end_picture(gpu_ctx);
                 int slot = gpu_compute_submitted_slot(gpu_ctx);
-                gpu_compute_sync_slot(gpu_ctx, slot);
-
-                if (!is_idr && encoder->has_ref) {
-                    void *mv_data = NULL;
-                    size_t mv_size = 0;
-                    if (gpu_compute_get_mv_staging_data_slot(gpu_ctx, slot, &mv_data, &mv_size) == 0 && mv_data) {
-                        size_t total_cus = ((size_t)encoder->coded_width / HEVC_CU_SIZE) * (encoder->coded_height / HEVC_CU_SIZE);
-                        size_t max_bytes = total_cus * sizeof(gpu_mv_t);
-                        size_t copy_bytes = (mv_size < max_bytes) ? mv_size : max_bytes;
-                        memcpy(encoder->gpu_mvs, mv_data, copy_bytes);
-                        encoder->num_gpu_mvs = (uint32_t)(copy_bytes / sizeof(gpu_mv_t));
+                if (gpu_compute_sync_slot(gpu_ctx, slot) == 0) {
+                    if (!is_idr && encoder->has_ref) {
+                        void *mv_data = NULL;
+                        size_t mv_size = 0;
+                        if (gpu_compute_get_mv_staging_data_slot(gpu_ctx, slot, &mv_data, &mv_size) == 0 && mv_data) {
+                            size_t total_cus = ((size_t)encoder->coded_width / HEVC_CU_SIZE) * (encoder->coded_height / HEVC_CU_SIZE);
+                            size_t max_bytes = total_cus * sizeof(gpu_mv_t);
+                            size_t copy_bytes = (mv_size < max_bytes) ? mv_size : max_bytes;
+                            memcpy(encoder->gpu_mvs, mv_data, copy_bytes);
+                            encoder->num_gpu_mvs = (uint32_t)(copy_bytes / sizeof(gpu_mv_t));
+                        }
                     }
+                } else {
+                    encoder->num_gpu_mvs = 0;
                 }
             }
         }

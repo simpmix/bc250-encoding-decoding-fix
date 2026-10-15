@@ -1070,19 +1070,28 @@ int bc250_gpu_init(bc250_gpu_context_t *ctx) {
     VkQueueFamilyProperties *qf_props = malloc(qf_count * sizeof(VkQueueFamilyProperties));
     vkGetPhysicalDeviceQueueFamilyProperties(ctx->physical_device, &qf_count, qf_props);
 
+    const char *env_async = getenv("BC250_ASYNC_COMPUTE");
+    bool allow_async = !(env_async && (strcmp(env_async, "0") == 0 || strcmp(env_async, "false") == 0));
+    bool force_async = env_async && (strcmp(env_async, "1") == 0 || strcmp(env_async, "true") == 0);
+
     /* 1. Prioritize dedicated hardware async compute queue (ACE - Asynchronous
      * Compute Engine, present across GCN and RDNA architectures). */
     ctx->compute_queue_family = (uint32_t)-1;
     ctx->is_async_compute = false;
     ctx->async_compute_queue_family = (uint32_t)-1;
-    for (uint32_t i = 0; i < qf_count; i++) {
-        if ((qf_props[i].queueFlags & VK_QUEUE_COMPUTE_BIT) &&
-            !(qf_props[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
-            ctx->compute_queue_family = i;
-            ctx->is_async_compute = true;
-            ctx->async_compute_queue_family = i;
-            fprintf(stderr, "[bc250-gpu] Using dedicated async compute queue family %u (ACE engine)\n", i);
-            break;
+    if (allow_async) {
+        for (uint32_t i = 0; i < qf_count; i++) {
+            if ((qf_props[i].queueFlags & VK_QUEUE_COMPUTE_BIT) &&
+                !(qf_props[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
+                ctx->compute_queue_family = i;
+                ctx->is_async_compute = true;
+                ctx->async_compute_queue_family = i;
+                fprintf(stderr, "[bc250-gpu] Using dedicated async compute queue family %u (ACE engine)\n", i);
+                break;
+            }
+        }
+        if (force_async && !ctx->is_async_compute) {
+            fprintf(stderr, "[bc250-gpu] BC250_ASYNC_COMPUTE=1 requested but dedicated ACE queue unavailable\n");
         }
     }
     /* 2. Fallback to any compute-capable queue */

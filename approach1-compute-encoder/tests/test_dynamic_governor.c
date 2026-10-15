@@ -298,7 +298,55 @@ static void test_governor_deadline_and_predictive_pacing(void)
     assert(t1 == GOV_TIER_1_GPU_FAST);
     assert(dynamic_governor_get_dropped_frames_prevented(&gov) == 1);
 
+    /* 5. Test predictive velocity pacing at 120 FPS (deadline = 8.33ms, vel_thresh = 0.75ms) */
+    dynamic_governor_reset(&gov);
+    dynamic_governor_set_framerate(&gov, 120.0);
+    assert(gov.dropped_frames_prevented == 0);
+    governor_tier_t t120_0 = dynamic_governor_update(&gov, 3.0);
+    assert(t120_0 == GOV_TIER_0_GPU_FULL);
+    /* Jump: 3.0ms -> 4.2ms (velocity = +1.2ms > 0.75ms vel_thresh).
+     * Standard EMA is 0.75*3.0 + 0.25*4.2 = 3.3ms (< 3.75ms Tier 1 threshold).
+     * Predictive pacing projects EMA + 0.5*1.2 = 3.9ms (> 3.75ms),
+     * immediately shifting to Tier 1 at 120 FPS. */
+    governor_tier_t t120_1 = dynamic_governor_update(&gov, 4.2);
+    assert(t120_1 == GOV_TIER_1_GPU_FAST);
+    assert(dynamic_governor_get_dropped_frames_prevented(&gov) == 1);
+
     printf("  ✓ Governor v2 deadline scaling & predictive velocity pacing verified!\n");
+}
+
+static void test_governor_direct_tier0_spike_dwell(void)
+{
+    printf("[TEST] Testing that high latency spike from Tier 0 dwells in Tier 1 before entering CPU offload...\n");
+
+    dynamic_governor_t gov;
+    dynamic_governor_init(&gov);
+    gov.cpu_offload_enabled = true;
+    gov.min_dwell_frames = 6;
+
+    /* Long-running Tier 0 baseline (100 frames) */
+    for (int i = 0; i < 100; i++) {
+        dynamic_governor_update(&gov, 3.5);
+    }
+    assert(dynamic_governor_get_tier(&gov) == GOV_TIER_0_GPU_FULL);
+    assert(gov.frames_in_tier >= 100);
+
+    /* Immediate severe latency spike (13.5ms > tier2 threshold 10.5ms).
+     * Even though frames_in_tier was 100 in Tier 0, the governor MUST NOT
+     * jump directly to Tier 2 CPU offload; it must enter Tier 1 GPU Fast ME first! */
+    for (int i = 0; i < 4; i++) {
+        dynamic_governor_update(&gov, 13.5);
+    }
+    /* Metric is now > 12ms, but dwell in Tier 1 is still < min_dwell_frames (4 < 6) */
+    assert(dynamic_governor_get_tier(&gov) == GOV_TIER_1_GPU_FAST);
+
+    /* After holding Tier 1 for min_dwell_frames under sustained pressure, it safely promotes to Tier 2 */
+    for (int i = 0; i < 5; i++) {
+        dynamic_governor_update(&gov, 13.5);
+    }
+    assert(dynamic_governor_get_tier(&gov) == GOV_TIER_2_CPU_OFFLOAD);
+
+    printf("  ✓ Direct Tier 0 spike dwell gate verified!\n");
 }
 
 static void test_telemetry_subsystem(void)
@@ -370,6 +418,7 @@ int main(void)
 
     test_governor_transitions();
     test_governor_dwell_gate();
+    test_governor_direct_tier0_spike_dwell();
     test_governor_gpu_only_mode();
     test_governor_failover_handled();
     test_governor_negative_latency();

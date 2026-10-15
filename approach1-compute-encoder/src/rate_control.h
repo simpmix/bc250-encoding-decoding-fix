@@ -68,6 +68,11 @@ typedef struct {
     double   still_share;     /* of recent P pictures, the share that were still */
     double   pixels;          /* per picture, for the first guess */
 
+    /* Stream geometry and nominal bitrate */
+    uint32_t width;
+    uint32_t height;
+    uint32_t nominal_bitrate;          /* Baseline target bitrate before congestion reductions */
+
     /* Low-Latency Jitter Smoothing & Sudden Drop Adaptation */
     int      jitter_smoothing_enabled; /* 1 = active (default in RC_LOW_LATENCY) */
     uint32_t jitter_burst_cap_bits;    /* dynamically calculated burst ceiling */
@@ -100,5 +105,6 @@ uint32_t rc_get_quality_level(const rate_control_t *rc);
 void rc_set_jitter_smoothing(rate_control_t *rc, int enable);
 int  rc_get_jitter_smoothing(const rate_control_t *rc);
 void rc_notify_network_congestion(rate_control_t *rc, double drop_ratio);
+void rc_reset_congestion(rate_control_t *rc);
 
 #endif

@@ -141,6 +141,7 @@ To configure WiVRn for ~36ms motion-to-photon latency and ~190 Mbps throughput:
 | `BC250_GPU_TIMEOUT_MS` | *(unset)* | Overrides the GPU fence-wait budget. Unset means 16 ms for a live streaming caller, infinite otherwise. |
 | `BC250_STATS_PATH` | `/dev/shm/bc250_stats` | Custom file path for real-time shared memory telemetry snapshot. |
 | `BC250_RC_JITTER_SMOOTHING` | `1` (live) | Enable (1) or disable (0) low-latency jitter smoothing filter and burst ceiling clamping. |
+| `BC250_ASYNC_COMPUTE` | `1` (auto) | Enable (`1`) or disable (`0`) dedicated Vulkan Async Compute Engine (ACE) hardware queue. |
 
 ## Verification & Diagnostics
 

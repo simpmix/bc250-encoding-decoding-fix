@@ -180,6 +180,36 @@ static void test_rate_control_low_latency_and_jitter(void) {
     int smoothed_qp = rc_get_frame_qp(&rc_jitter, 0);
     assert(smoothed_qp >= base_qp);
 
+    /* Test resolution preservation in rc_notify_network_congestion for 720p */
+    rate_control_t rc_720p;
+    rc_init(&rc_720p, RC_LOW_LATENCY, 10000000, 60.0, 1280, 720);
+    int base_720p_initial = rc_720p.base_qp;
+    /* Congestion drop 50% */
+    rc_notify_network_congestion(&rc_720p, 0.50);
+    assert(rc_720p.width == 1280 && rc_720p.height == 720);
+    /* For 5 Mbps at 720p60, base QP must be higher than 10 Mbps at 720p60, NOT default 26 */
+    assert(rc_720p.base_qp > base_720p_initial);
+    /* Test rc_reset_congestion restores nominal bitrate */
+    rc_reset_congestion(&rc_720p);
+    assert(rc_720p.target_bitrate == 10000000);
+    assert(rc_720p.base_qp == base_720p_initial);
+
+    /* Test bandwidth recovery clears jitter_burst_cap_bits */
+    rc_notify_network_congestion(&rc_720p, 0.40);
+    assert(rc_720p.jitter_burst_cap_bits > 0);
+    /* Network recovers: bitrate increased back to nominal */
+    rc_update_bitrate(&rc_720p, 10000000, 0, 0);
+    assert(rc_720p.jitter_burst_cap_bits == 0);
+
+    /* Test rapid network drop fluttering: oscillating drop ratios */
+    for (int cycle = 0; cycle < 10; cycle++) {
+        rc_notify_network_congestion(&rc_720p, (cycle % 2 == 0) ? 0.20 : 0.80);
+        assert(rc_720p.buffer_fullness >= 0);
+        assert(rc_720p.buffer_fullness <= rc_720p.buffer_size);
+        assert(rc_720p.current_qp >= rc_720p.qp_min);
+        assert(rc_720p.current_qp <= rc_720p.qp_max);
+    }
+
     printf("[test_encode] Low-Latency Rate Control and Jitter Smoothing tests passed.\n");
 }
 

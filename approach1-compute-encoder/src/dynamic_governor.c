@@ -234,8 +234,13 @@ governor_tier_t dynamic_governor_update(dynamic_governor_t *gov, double gpu_late
     double metric = gov->ema_latency_ms;
 
     /* Predictive velocity pacing: if latency is accelerating steeply under 3D game contention,
-     * project impending deadline breach and shift gears before the frame deadline is missed */
-    if (gov->predictive_pacing_enabled && latency_velocity > 1.5 && gpu_latency_ms >= gov->tier1_threshold_ms) {
+     * project impending deadline breach and shift gears before the frame deadline is missed.
+     * Velocity threshold scales proportionally with frame deadline budget (e.g. 1.5ms @ 60fps, 0.75ms @ 120fps). */
+    double vel_thresh = gov->frame_deadline_ms * 0.09;
+    if (vel_thresh > 1.5) vel_thresh = 1.5;
+    if (vel_thresh < 0.5) vel_thresh = 0.5;
+
+    if (gov->predictive_pacing_enabled && latency_velocity > vel_thresh && gpu_latency_ms >= gov->tier1_threshold_ms) {
         double predicted = gov->ema_latency_ms + 0.5 * latency_velocity;
         if (predicted > metric) metric = predicted;
     }
@@ -276,15 +281,14 @@ governor_tier_t dynamic_governor_update(dynamic_governor_t *gov, double gpu_late
         /* If CPU offload is enabled, transition to Tier 2; otherwise clamp to Tier 1 GPU Fast ME */
         governor_tier_t target_tier = gov->cpu_offload_enabled ? GOV_TIER_2_CPU_OFFLOAD : GOV_TIER_1_GPU_FAST;
         /* The dwell gate, and it only ever gates the expensive tier: crossing
-         * into the CPU offload requires the current tier to have been held
-         * for min_dwell_frames, so a frame that lands the EMA over the
+         * into the CPU offload requires the intermediate tier (Tier 1 GPU Fast ME)
+         * to have been held for min_dwell_frames, so a frame that lands the EMA over the
          * threshold right after a tier change is answered with Tier 1 (a
          * reduced search window on the GPU, i.e. strictly less work than
          * Tier 2) and the offload is only entered once the pressure has been
-         * there for a while. Leaving the offload is governed by
-         * step_down_hysteresis below, as before. */
-        if (target_tier == GOV_TIER_2_CPU_OFFLOAD &&
-            gov->frames_in_tier < gov->min_dwell_frames) {
+         * sustained. Leaving the offload is governed by step_down_hysteresis below. */
+        if (target_tier == GOV_TIER_2_CPU_OFFLOAD && gov->min_dwell_frames > 0 &&
+            (gov->current_tier != GOV_TIER_1_GPU_FAST || gov->frames_in_tier < gov->min_dwell_frames)) {
             target_tier = GOV_TIER_1_GPU_FAST;
         }
         if (gov->current_tier < target_tier) {

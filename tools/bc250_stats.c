@@ -37,6 +37,15 @@
 #define HAVE_POSIX_SHM 0
 #endif
 
+#include <stdatomic.h>
+
+#if __has_include("telemetry.h")
+#include "telemetry.h"
+typedef bc250_telemetry_data_t bc250_telemetry_layout_t;
+#elif __has_include("../approach1-compute-encoder/src/telemetry.h")
+#include "../approach1-compute-encoder/src/telemetry.h"
+typedef bc250_telemetry_data_t bc250_telemetry_layout_t;
+#else
 #define BC250_TELEMETRY_MAGIC 0x30353242 /* "B250" */
 #define BC250_TELEMETRY_VERSION 2
 #define BC250_SHM_PATH_DEFAULT "/dev/shm/bc250_stats"
@@ -73,6 +82,7 @@ typedef struct {
     int64_t buffer_fullness;
     uint32_t jitter_smoothing_active;
 } bc250_telemetry_layout_t;
+#endif
 
 static const char *get_stats_path(void) {
     const char *env = getenv("BC250_STATS_PATH");
@@ -115,22 +125,20 @@ static int read_telemetry_snapshot(const char *path, bc250_telemetry_layout_t *o
     }
 
     const bc250_telemetry_layout_t *shm = (const bc250_telemetry_layout_t *)map;
-    for (int retry = 0; retry < 5; retry++) {
-        uint32_t s1 = shm->sequence;
+    for (int retry = 0; retry < 10; retry++) {
+        uint32_t s1 = atomic_load_explicit((_Atomic uint32_t *)&shm->sequence, memory_order_acquire);
         if (s1 & 1) {
-            struct timespec pause_ts = { .tv_sec = 0, .tv_nsec = 500000 };
+            struct timespec pause_ts = { .tv_sec = 0, .tv_nsec = 100000 };
             nanosleep(&pause_ts, NULL);
             continue;
         }
 
+        atomic_thread_fence(memory_order_acquire);
         memcpy(out, shm, sz);
+        atomic_thread_fence(memory_order_acquire);
 
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
-        __asm__ __volatile__("" ::: "memory");
-#endif
-
-        uint32_t s2 = shm->sequence;
-        if (s1 == s2) {
+        uint32_t s2 = atomic_load_explicit((_Atomic uint32_t *)&shm->sequence, memory_order_acquire);
+        if (s1 == s2 && !(s1 & 1)) {
             munmap(map, sz);
             close(fd);
             return (out->magic == BC250_TELEMETRY_MAGIC) ? 0 : -1;

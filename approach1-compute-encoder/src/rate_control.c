@@ -116,6 +116,9 @@ void rc_init(rate_control_t *rc, rc_mode_t mode, uint32_t bitrate, double fps,
     rc->measured_fps = 0.0;
     rc->debt = 0.0;
     rc->pixels = (double)width * (double)height;
+    rc->width = width;
+    rc->height = height;
+    rc->nominal_bitrate = rc->target_bitrate;
 
     /* Low-latency jitter smoothing & sudden drop adaptation */
     rc->jitter_smoothing_enabled = (mode == RC_LOW_LATENCY) ? 1 : 0;
@@ -149,6 +152,11 @@ void rc_update_bitrate(rate_control_t *rc, uint32_t bitrate, uint32_t width, uin
     double ratio = (double)bitrate / old_rate;
 
     rc->target_bitrate = bitrate;
+    if (width > 0 && height > 0) {
+        rc->width = width;
+        rc->height = height;
+        rc->pixels = (double)width * (double)height;
+    }
     double fps = (rc->framerate > 0.0) ? rc->framerate : 30.0;
     rc->target_bits_per_frame = (uint32_t)(rc->target_bitrate / fps);
     if (rc->target_bits_per_frame < 100) rc->target_bits_per_frame = 100;
@@ -171,22 +179,23 @@ void rc_update_bitrate(rate_control_t *rc, uint32_t bitrate, uint32_t width, uin
 
     /* Sudden network bandwidth drop handling:
      * When bitrate drops significantly (>=25% drop, ratio <= 0.75),
-     * flush accumulated positive integral error and scale debt to prevent
+     * scale accumulated integral error and debt proportionally to prevent
      * packet bursts and buffer overflow on network streaming connections. */
     if (ratio < 0.75) {
-        if (rc->error_integral > 0) {
-            rc->error_integral = (int64_t)((double)rc->error_integral * ratio);
-        }
-        if (rc->debt > 0.0) {
-            rc->debt = rc->debt * ratio;
-        }
+        rc->error_integral = (int64_t)((double)rc->error_integral * ratio);
+        rc->debt = rc->debt * ratio;
         if (rc->jitter_smoothing_enabled) {
             rc->jitter_burst_cap_bits = (uint32_t)((double)rc->target_bits_per_frame * 1.30);
         }
         rc->bandwidth_drops_handled++;
+    } else if (ratio >= 1.0) {
+        /* Bandwidth recovery: clear temporary jitter burst cap to allow channel expansion */
+        if (rc->jitter_smoothing_enabled) {
+            rc->jitter_burst_cap_bits = 0;
+        }
     }
 
-    int new_base = rc_estimate_base_qp(rc->target_bitrate, rc->framerate, width, height);
+    int new_base = rc_estimate_base_qp(rc->target_bitrate, rc->framerate, rc->width, rc->height);
     int qp_diff = new_base - rc->base_qp;
     rc->base_qp = new_base;
     rc->current_qp += qp_diff;
@@ -280,11 +289,14 @@ int rc_get_frame_qp(rate_control_t *rc, uint64_t est_sad) {
         }
     }
 
-    /* Low-latency jitter smoothing: if recent frame sizes exceed 1.35x target bit quota,
-     * add gentle +1 QP bias to smooth packet delivery without abrupt macroblocking */
-    if (rc->jitter_smoothing_enabled && rc->target_bits_per_frame > 0 &&
-        rc->ema_frame_bits > (double)rc->target_bits_per_frame * 1.35) {
-        qp_adjust += 1;
+    /* Low-latency jitter smoothing: if recent frame sizes exceed target bit quota,
+     * add gentle QP bias to smooth packet delivery without abrupt macroblocking */
+    if (rc->jitter_smoothing_enabled && rc->target_bits_per_frame > 0) {
+        if (rc->ema_frame_bits > (double)rc->target_bits_per_frame * 1.80) {
+            qp_adjust += 2;
+        } else if (rc->ema_frame_bits > (double)rc->target_bits_per_frame * 1.35) {
+            qp_adjust += 1;
+        }
     }
 
     /* Clamp maximum single-frame QP delta to prevent visual pulsation.
@@ -474,9 +486,15 @@ int rc_get_jitter_smoothing(const rate_control_t *rc) {
 void rc_notify_network_congestion(rate_control_t *rc, double drop_ratio) {
     if (!rc || drop_ratio <= 0.0) return;
     if (drop_ratio > 0.90) drop_ratio = 0.90;
-    uint32_t new_rate = (uint32_t)((double)rc->target_bitrate * (1.0 - drop_ratio));
+    uint32_t baseline = rc->nominal_bitrate > 0 ? rc->nominal_bitrate : rc->target_bitrate;
+    uint32_t new_rate = (uint32_t)((double)baseline * (1.0 - drop_ratio));
     if (new_rate < 500000) new_rate = 500000;
-    rc_update_bitrate(rc, new_rate, 0, 0);
+    rc_update_bitrate(rc, new_rate, rc->width, rc->height);
+}
+
+void rc_reset_congestion(rate_control_t *rc) {
+    if (!rc || rc->nominal_bitrate == 0 || rc->target_bitrate == rc->nominal_bitrate) return;
+    rc_update_bitrate(rc, rc->nominal_bitrate, rc->width, rc->height);
 }
 
 /* ------------------------------------------------ model-based QP */
