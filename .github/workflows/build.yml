@@ -46,6 +46,20 @@ jobs:
       run: |
         cmake --build approach1-compute-encoder/build --parallel $(nproc)
 
+    - name: Verify Zero DT_NEEDED on x264/x265 SONAMEs
+      run: |
+        echo "Verifying bc250_drv_video.so has zero DT_NEEDED dependencies on x264/x265..."
+        SO_FILE="approach1-compute-encoder/build/bc250_drv_video.so"
+        if [ ! -f "$SO_FILE" ]; then
+          SO_FILE="approach1-compute-encoder/build/libbc250_drv_video.so"
+        fi
+        readelf -d "$SO_FILE" | grep NEEDED || true
+        if readelf -d "$SO_FILE" | grep NEEDED | grep -E "libx264|libx265"; then
+          echo "ERROR: Hard-coded DT_NEEDED dependencies on libx264/libx265 found in $SO_FILE!"
+          exit 1
+        fi
+        echo "✓ Driver verified clean: zero hard-coded DT_NEEDED dependencies on x264/x265"
+
     - name: Run Test Suite
       run: |
         # No continue-on-error / fallback here on purpose: a real test failure

@@ -91,6 +91,26 @@ for dri in "${DRI_CANDIDATES[@]}"; do
                 echo -e "  ${GREEN}✓ All shared library dependencies resolved (ldd clean)${NC}"
             fi
         fi
+
+        # Probe optional runtime CPU encoding libraries (loaded via dlopen)
+        FOUND_X264=0
+        if (command -v ldconfig &>/dev/null && ldconfig -p 2>/dev/null | grep -q "libx264\.so") || [ -n "$(find /usr/lib* /usr/local/lib* -name 'libx264.so*' 2>/dev/null | head -n 1)" ]; then
+            FOUND_X264=1
+        fi
+        FOUND_X265=0
+        if (command -v ldconfig &>/dev/null && ldconfig -p 2>/dev/null | grep -q "libx265\.so") || [ -n "$(find /usr/lib* /usr/local/lib* -name 'libx265.so*' 2>/dev/null | head -n 1)" ]; then
+            FOUND_X265=1
+        fi
+        if [ $FOUND_X264 -eq 1 ]; then
+            echo -e "  ${GREEN}✓ libx264 runtime detected (CPU H.264 offload available)${NC}"
+        else
+            echo -e "  ${YELLOW}! libx264 runtime not found (H.264 falls back to GPU compute encoder)${NC}"
+        fi
+        if [ $FOUND_X265 -eq 1 ]; then
+            echo -e "  ${GREEN}✓ libx265 runtime detected (CPU HEVC offload available)${NC}"
+        else
+            echo -e "  ${YELLOW}! libx265 runtime not found (HEVC falls back to GPU compute encoder)${NC}"
+        fi
         break
     fi
 done

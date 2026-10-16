@@ -19,36 +19,6 @@
 extern char *program_invocation_short_name;
 #endif
 
-#ifdef BC250_HAVE_X265
-#include <x265.h>
-
-static bool is_steam_caller(void)
-{
-#if defined(__linux__)
-    if (!program_invocation_short_name) return false;
-    return (strcmp(program_invocation_short_name, "steam") == 0 ||
-            strcmp(program_invocation_short_name, "streaming_client") == 0 ||
-            strcmp(program_invocation_short_name, "steamwebhelper") == 0 ||
-            strcmp(program_invocation_short_name, "gamescope") == 0 ||
-            strstr(program_invocation_short_name, "steam") != NULL ||
-            strstr(program_invocation_short_name, "gamescope") != NULL);
-#else
-    return false;
-#endif
-}
-
-struct hevc_x265 {
-    x265_encoder *h;
-    x265_param param;
-    hevc_x265_config_t applied;
-    const char *preset;
-    int threads;
-    int64_t pts;
-    uint8_t *i420_u;
-    uint8_t *i420_v;
-    size_t i420_cap;
-};
-
 static const char *const x265_presets[] = {
     "ultrafast", "superfast", "veryfast", "faster", "fast",
     "medium", "slow", "slower", "veryslow", "placebo"
@@ -130,6 +100,186 @@ const char *hevc_x265_preset_for(const hevc_x265_config_t *cfg)
     return x265_presets[i];
 }
 
+#ifdef BC250_HAVE_X265
+#include <dlfcn.h>
+#include <pthread.h>
+#include <x265.h>
+
+static bool is_steam_caller(void)
+{
+#if defined(__linux__)
+    if (!program_invocation_short_name) return false;
+    return (strcmp(program_invocation_short_name, "steam") == 0 ||
+            strcmp(program_invocation_short_name, "streaming_client") == 0 ||
+            strcmp(program_invocation_short_name, "steamwebhelper") == 0 ||
+            strcmp(program_invocation_short_name, "gamescope") == 0 ||
+            strstr(program_invocation_short_name, "steam") != NULL ||
+            strstr(program_invocation_short_name, "gamescope") != NULL);
+#else
+    return false;
+#endif
+}
+
+typedef struct {
+    void *handle;
+    int (*param_default_preset)(x265_param *param, const char *preset, const char *tune);
+    int (*param_apply_profile)(x265_param *param, const char *profile);
+    x265_encoder *(*encoder_open)(x265_param *param);
+    int (*encoder_reconfig)(x265_encoder *encoder, x265_param *param);
+    void (*picture_init)(x265_param *param, x265_picture *pic);
+    int (*encoder_encode)(x265_encoder *encoder, x265_nal **pp_nal, uint32_t *pi_nal, x265_picture *pic_in, x265_picture *pic_out);
+    void (*encoder_close)(x265_encoder *encoder);
+} x265_ops_t;
+
+static pthread_once_t x265_once = PTHREAD_ONCE_INIT;
+static x265_ops_t x265_ops;
+static bool x265_available = false;
+
+static const char *const x265_candidates[] = {
+    "libx265.so",
+    "libx265.so.215",
+    "libx265.so.212",
+    "libx265.so.209",
+    "libx265.so.200",
+    "libx265.so.199",
+    "libx265.so.192",
+    "libx265.so.188",
+    "libx265.so.179",
+    "libx265.so.176",
+    "libx265.so.160",
+    "libx265.so.151",
+    "libx265.so.146",
+    "libx265.so.130",
+    NULL
+};
+
+static void load_x265_ops(void)
+{
+    void *h = NULL;
+    for (int i = 0; x265_candidates[i]; i++) {
+        h = dlopen(x265_candidates[i], RTLD_NOW | RTLD_LOCAL);
+        if (h) break;
+    }
+    if (!h) {
+        char buf[64];
+        for (int ver = 230; ver >= 130; ver--) {
+            snprintf(buf, sizeof(buf), "libx265.so.%d", ver);
+            h = dlopen(buf, RTLD_NOW | RTLD_LOCAL);
+            if (h) break;
+        }
+    }
+    if (!h) {
+        static const char *const search_paths[] = {
+            "/usr/local/lib64/libx265.so",
+            "/usr/local/lib/libx265.so",
+            "/usr/lib64/libx265.so",
+            "/usr/lib/x86_64-linux-gnu/libx265.so",
+            "/usr/lib/libx265.so",
+            NULL
+        };
+        for (int i = 0; search_paths[i]; i++) {
+            h = dlopen(search_paths[i], RTLD_NOW | RTLD_LOCAL);
+            if (h) break;
+        }
+    }
+    if (!h) {
+        fprintf(stderr, "[bc250-x265] libx265 shared library not found via dlopen\n");
+        return;
+    }
+
+    /* 1. Try resolving through x265_api_get / x265_api_get_### */
+    const x265_api *(*p_x265_api_get)(int) = (const x265_api *(*)(int))dlsym(h, "x265_api_get");
+#ifdef X265_BUILD
+    if (!p_x265_api_get) {
+        char sym[64];
+        snprintf(sym, sizeof(sym), "x265_api_get_%d", X265_BUILD);
+        p_x265_api_get = (const x265_api *(*)(int))dlsym(h, sym);
+    }
+#endif
+    if (!p_x265_api_get) {
+        char sym[64];
+        for (int b = 230; b >= 130; b--) {
+            snprintf(sym, sizeof(sym), "x265_api_get_%d", b);
+            p_x265_api_get = (const x265_api *(*)(int))dlsym(h, sym);
+            if (p_x265_api_get) break;
+        }
+    }
+    if (p_x265_api_get) {
+        const x265_api *api = p_x265_api_get(0);
+        if (api) {
+            x265_ops.param_default_preset = api->param_default_preset;
+            x265_ops.param_apply_profile = api->param_apply_profile;
+            x265_ops.encoder_open = api->encoder_open;
+            x265_ops.encoder_reconfig = api->encoder_reconfig;
+            x265_ops.picture_init = api->picture_init;
+            x265_ops.encoder_encode = api->encoder_encode;
+            x265_ops.encoder_close = api->encoder_close;
+        }
+    }
+
+    /* 2. For any symbols not retrieved via x265_api_get, resolve individually */
+    if (!x265_ops.param_default_preset)
+        x265_ops.param_default_preset = (int (*)(x265_param *, const char *, const char *))dlsym(h, "x265_param_default_preset");
+    if (!x265_ops.param_apply_profile)
+        x265_ops.param_apply_profile = (int (*)(x265_param *, const char *))dlsym(h, "x265_param_apply_profile");
+    if (!x265_ops.encoder_reconfig)
+        x265_ops.encoder_reconfig = (int (*)(x265_encoder *, x265_param *))dlsym(h, "x265_encoder_reconfig");
+    if (!x265_ops.picture_init)
+        x265_ops.picture_init = (void (*)(x265_param *, x265_picture *))dlsym(h, "x265_picture_init");
+    if (!x265_ops.encoder_encode)
+        x265_ops.encoder_encode = (int (*)(x265_encoder *, x265_nal **, uint32_t *, x265_picture *, x265_picture *))dlsym(h, "x265_encoder_encode");
+    if (!x265_ops.encoder_close)
+        x265_ops.encoder_close = (void (*)(x265_encoder *))dlsym(h, "x265_encoder_close");
+
+    if (!x265_ops.encoder_open) {
+        x265_ops.encoder_open = (x265_encoder *(*)(x265_param *))dlsym(h, "x265_encoder_open");
+#ifdef X265_BUILD
+        if (!x265_ops.encoder_open) {
+            char sym[64];
+            snprintf(sym, sizeof(sym), "x265_encoder_open_%d", X265_BUILD);
+            x265_ops.encoder_open = (x265_encoder *(*)(x265_param *))dlsym(h, sym);
+        }
+#endif
+        if (!x265_ops.encoder_open) {
+            char sym[64];
+            for (int b = 230; b >= 130; b--) {
+                snprintf(sym, sizeof(sym), "x265_encoder_open_%d", b);
+                x265_ops.encoder_open = (x265_encoder *(*)(x265_param *))dlsym(h, sym);
+                if (x265_ops.encoder_open) break;
+            }
+        }
+    }
+
+    if (!x265_ops.param_default_preset ||
+        !x265_ops.param_apply_profile ||
+        !x265_ops.encoder_open ||
+        !x265_ops.encoder_reconfig ||
+        !x265_ops.picture_init ||
+        !x265_ops.encoder_encode ||
+        !x265_ops.encoder_close) {
+        fprintf(stderr, "[bc250-x265] Failed to resolve required symbols from libx265\n");
+        dlclose(h);
+        memset(&x265_ops, 0, sizeof(x265_ops));
+        return;
+    }
+
+    x265_ops.handle = h;
+    x265_available = true;
+    fprintf(stderr, "[bc250-x265] Successfully loaded libx265 via runtime dlopen\n");
+}
+
+struct hevc_x265 {
+    x265_encoder *h;
+    x265_param param;
+    hevc_x265_config_t applied;
+    const char *preset;
+    int threads;
+    int64_t pts;
+    uint8_t *i420_u;
+    uint8_t *i420_v;
+    size_t i420_cap;
+};
+
 static int threads_for(const hevc_x265_config_t *cfg)
 {
     const char *env = getenv("BC250_X265_THREADS");
@@ -180,14 +330,14 @@ static void set_rate(x265_param *p, const hevc_x265_config_t *cfg)
 static int open_encoder(hevc_x265_t *x, const hevc_x265_config_t *cfg)
 {
     if (x->h) {
-        x265_encoder_close(x->h);
+        x265_ops.encoder_close(x->h);
         x->h = NULL;
     }
     x->preset = hevc_x265_preset_for(cfg);
     x->threads = threads_for(cfg);
 
     const char *tune = cfg->live ? "zerolatency" : NULL;
-    if (x265_param_default_preset(&x->param, x->preset, tune) < 0) {
+    if (x265_ops.param_default_preset(&x->param, x->preset, tune) < 0) {
         fprintf(stderr, "[bc250-x265] unknown preset '%s'\n", x->preset);
         return -1;
     }
@@ -223,12 +373,12 @@ static int open_encoder(hevc_x265_t *x, const hevc_x265_config_t *cfg)
     set_rate(&x->param, cfg);
 
     if (cfg->ten_bit) {
-        x265_param_apply_profile(&x->param, "main10");
+        x265_ops.param_apply_profile(&x->param, "main10");
     } else {
-        x265_param_apply_profile(&x->param, "main");
+        x265_ops.param_apply_profile(&x->param, "main");
     }
 
-    x->h = x265_encoder_open(&x->param);
+    x->h = x265_ops.encoder_open(&x->param);
     if (!x->h) {
         fprintf(stderr, "[bc250-x265] x265_encoder_open failed (%ux%u, %s, %s)\n",
                 cfg->width, cfg->height, x->preset, cfg->ten_bit ? "10-bit" : "8-bit");
@@ -242,6 +392,8 @@ static int open_encoder(hevc_x265_t *x, const hevc_x265_config_t *cfg)
 
 hevc_x265_t *hevc_x265_create(void)
 {
+    pthread_once(&x265_once, load_x265_ops);
+    if (!x265_available) return NULL;
     hevc_x265_t *x = calloc(1, sizeof(*x));
     return x;
 }
@@ -270,7 +422,7 @@ int hevc_x265_encode(hevc_x265_t *x, const hevc_x265_config_t *cfg,
         if (open_encoder(x, cfg) < 0) return -1;
     } else if (!same_rate(cfg, &x->applied)) {
         set_rate(&x->param, cfg);
-        if (x265_encoder_reconfig(x->h, &x->param) < 0) {
+        if (x265_ops.encoder_reconfig(x->h, &x->param) < 0) {
             if (open_encoder(x, cfg) < 0) return -1;
         }
         x->applied = *cfg;
@@ -319,7 +471,7 @@ int hevc_x265_encode(hevc_x265_t *x, const hevc_x265_config_t *cfg,
     }
 
     x265_picture pic_in;
-    x265_picture_init(&x->param, &pic_in);
+    x265_ops.picture_init(&x->param, &pic_in);
     pic_in.colorSpace = X265_CSP_I420;
     pic_in.pts = x->pts++;
     pic_in.planes[0] = (void *)y;
@@ -339,7 +491,7 @@ int hevc_x265_encode(hevc_x265_t *x, const hevc_x265_config_t *cfg,
 
     x265_nal *nal = NULL;
     uint32_t pi_nal = 0;
-    int nbytes = x265_encoder_encode(x->h, &nal, &pi_nal, &pic_in, NULL);
+    int nbytes = x265_ops.encoder_encode(x->h, &nal, &pi_nal, &pic_in, NULL);
     if (nbytes < 0) return -1;
 
     size_t total = 0;
@@ -355,7 +507,7 @@ int hevc_x265_encode(hevc_x265_t *x, const hevc_x265_config_t *cfg,
 void hevc_x265_destroy(hevc_x265_t *x)
 {
     if (!x) return;
-    if (x->h) x265_encoder_close(x->h);
+    if (x->h && x265_ops.encoder_close) x265_ops.encoder_close(x->h);
     free(x->i420_u);
     free(x->i420_v);
     free(x);
@@ -374,9 +526,5 @@ int hevc_x265_encode(hevc_x265_t *x, const hevc_x265_config_t *cfg,
     return -1;
 }
 void hevc_x265_destroy(hevc_x265_t *x) { (void)x; }
-const char *hevc_x265_preset_for(const hevc_x265_config_t *cfg) {
-    (void)cfg;
-    return "none";
-}
 
 #endif /* BC250_HAVE_X265 */

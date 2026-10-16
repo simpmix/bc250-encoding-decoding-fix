@@ -262,31 +262,34 @@ target_link_libraries(bc250_drv_video
 
 # H.264 through libx264 - see src/encoder_x264.h for why. Optional: without
 # it H.264 is encoded by the compute encoder, as before.
+# Note: encoder_x264.c uses runtime dlopen()/dlsym() probing so bc250_drv_video.so
+# carries ZERO hard-coded DT_NEEDED SONAME dependencies on libx264.
 option(BC250_WITH_X264 "Encode H.264 through libx264" ON)
 if(BC250_WITH_X264)
     pkg_check_modules(X264 x264)
     if(X264_FOUND)
         target_sources(bc250_drv_video PRIVATE src/encoder_x264.c)
         target_include_directories(bc250_drv_video PRIVATE ${X264_INCLUDE_DIRS})
-        target_link_libraries(bc250_drv_video ${X264_LINK_LIBRARIES})
         target_compile_definitions(bc250_drv_video PRIVATE BC250_HAVE_X264)
-        message(STATUS "libx264 ${X264_VERSION} found: H.264 encodes through x264")
+        message(STATUS "libx264 ${X264_VERSION} found: H.264 encodes through x264 (runtime dlopen)")
     else()
+        target_sources(bc250_drv_video PRIVATE src/encoder_x264.c)
         message(WARNING "libx264 not found: H.264 falls back to the compute encoder")
     endif()
 endif()
 
 # HEVC through libx265 - see src/encoder_x265.h for why. Optional: without
 # it HEVC is encoded by the compute encoder, as before.
+# Note: encoder_x265.c uses runtime dlopen()/dlsym() probing so bc250_drv_video.so
+# carries ZERO hard-coded DT_NEEDED SONAME dependencies on libx265.
 option(BC250_WITH_X265 "Encode HEVC through libx265" ON)
 if(BC250_WITH_X265)
     pkg_check_modules(X265 x265)
     if(X265_FOUND)
         target_sources(bc250_drv_video PRIVATE src/encoder_x265.c)
         target_include_directories(bc250_drv_video PRIVATE ${X265_INCLUDE_DIRS})
-        target_link_libraries(bc250_drv_video ${X265_LINK_LIBRARIES})
         target_compile_definitions(bc250_drv_video PRIVATE BC250_HAVE_X265)
-        message(STATUS "libx265 ${X265_VERSION} found: HEVC encodes through x265")
+        message(STATUS "libx265 ${X265_VERSION} found: HEVC encodes through x265 (runtime dlopen)")
     else()
         target_sources(bc250_drv_video PRIVATE src/encoder_x265.c)
         message(WARNING "libx265 not found: HEVC falls back to the compute encoder")
