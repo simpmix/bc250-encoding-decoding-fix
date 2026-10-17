@@ -19,6 +19,8 @@
 
 static uint8_t y_plane[W * H];
 static uint8_t uv_plane[W * H / 2];
+static uint16_t y_plane10[W * H];
+static uint16_t uv_plane10[W * H];
 static uint8_t out[W * H * 4];
 
 static void fill_frame(int frame)
@@ -30,6 +32,22 @@ static void fill_frame(int frame)
     }
     for (int i = 0; i < W * H / 2; i++) {
         uv_plane[i] = (uint8_t)(128 + ((i + frame) & 15));
+    }
+}
+
+static void fill_frame10(int frame)
+{
+    for (int r = 0; r < H; r++) {
+        for (int c = 0; c < W; c++) {
+            uint16_t val10 = (uint16_t)(((c + frame * 3) ^ (r * 2)) & 0x3FF);
+            y_plane10[r * W + c] = (uint16_t)(val10 << 6);
+        }
+    }
+    for (int i = 0; i < W * H / 2; i++) {
+        uint16_t u = (uint16_t)((512 + ((i + frame) & 63)) & 0x3FF);
+        uint16_t v = (uint16_t)((512 - ((i + frame) & 63)) & 0x3FF);
+        uv_plane10[i * 2] = (uint16_t)(u << 6);
+        uv_plane10[i * 2 + 1] = (uint16_t)(v << 6);
     }
 }
 
@@ -86,6 +104,36 @@ static void run_hevc_test(const char *what, hevc_x265_config_t cfg, int frames, 
     printf("[test_x265] %-32s ok\n", what);
 }
 
+static void run_hevc_test10(const char *what, hevc_x265_config_t cfg, int frames)
+{
+    hevc_x265_t *x = hevc_x265_create();
+    assert(x && "hevc_x265_create failed");
+
+    fill_frame10(0);
+    int n0 = hevc_x265_encode(x, &cfg, (const uint8_t *)y_plane10, W * 2,
+                              (const uint8_t *)uv_plane10, W * 2,
+                              true, cfg.rc_mode == RC_CQP ? cfg.qp : 0,
+                              out, sizeof(out));
+    if (n0 < 0) {
+        printf("[test_x265] %-32s skipped (libx265 lacks 10-bit support)\n", what);
+        hevc_x265_destroy(x);
+        return;
+    }
+    assert(n0 > 0 && "10-bit frame must output encoded bitstream");
+
+    for (int f = 1; f < frames; f++) {
+        fill_frame10(f);
+        int n = hevc_x265_encode(x, &cfg, (const uint8_t *)y_plane10, W * 2,
+                                 (const uint8_t *)uv_plane10, W * 2,
+                                 false, cfg.rc_mode == RC_CQP ? cfg.qp : 0,
+                                 out, sizeof(out));
+        assert(n > 0 && "every frame in must output encoded bitstream");
+    }
+
+    hevc_x265_destroy(x);
+    printf("[test_x265] %-32s ok\n", what);
+}
+
 int main(void)
 {
     const hevc_x265_config_t base = {
@@ -119,6 +167,14 @@ int main(void)
     c.bitrate = 500000;
     c.live = true;
     run_hevc_test("HEVC Low Latency Live", c, 6, -1);
+
+    c = base;
+    c.live = false;
+    run_hevc_test("HEVC Offline Transcode", c, 6, -1);
+
+    c = base;
+    c.ten_bit = true;
+    run_hevc_test10("HEVC Main10 P010", c, 6);
 
     /* Dynamic bitrate reconfiguration test */
     {

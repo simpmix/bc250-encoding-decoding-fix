@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bc250-encoding-decoding-fix v0.5.2 - https://github.com/simpmix/bc250-encoding-decoding-fix
+# bc250-encoding-decoding-fix v0.5.4 - https://github.com/simpmix/bc250-encoding-decoding-fix
 #
 # setup_steamos.sh - Automated installer tailored specifically for Valve SteamOS & HoloISO
 #
@@ -116,7 +116,7 @@ else
             echo -e "${RED}Error: 'cmake' not found and pre-built binary was not provided.${NC}"
             echo -e "Download bc250_drv_video.so and the shaders/ directory of compiled"
             echo -e "shaders from:"
-            echo -e "  ${BOLD}https://github.com/Shalasere/bc250-vulkan-encode-stopgap/releases${NC}"
+            echo -e "  ${BOLD}https://github.com/simpmix/bc250-encoding-decoding-fix/releases${NC}"
             echo -e "and place both at the repository root before re-running this script,"
             echo -e "or install build tools (cmake, gcc, libva, libdrm, vulkan-devel, glslang)"
             echo -e "to build from source."
@@ -177,7 +177,7 @@ if [ "$SPV_COUNT" -eq 0 ]; then
     echo -e "  ${BOLD}$REPO_ROOT/approach1-compute-encoder/build/${NC}  (local from-source build)"
     echo -e "If you only have bc250_drv_video.so, you also need its matching compiled"
     echo -e "shaders/ directory from the same build - get both from:"
-    echo -e "  ${BOLD}https://github.com/Shalasere/bc250-vulkan-encode-stopgap/releases${NC}"
+    echo -e "  ${BOLD}https://github.com/simpmix/bc250-encoding-decoding-fix/releases${NC}"
     echo -e "or build from source (requires cmake, gcc, libva, libdrm, vulkan-devel, glslang)."
     exit 1
 fi
@@ -278,11 +278,10 @@ echo
 echo -e "${BOLD}This changed your system in a few places.${NC} What, and how to undo it:"
 echo -e "  ${BOLD}sudo ./tools/bc250_uninstall.sh --dry-run${NC}   # list it, change nothing"
 echo -e "  ${BOLD}sudo ./tools/bc250_uninstall.sh${NC}             # remove it"
-echo -e "Note: LIBVA_DRIVER_NAME=bc250 was set ${BOLD}system-wide${NC}, and this driver is"
-echo -e "encode-only - so other apps lose hardware video ${BOLD}decode${NC} until it is removed."
-echo -e "To avoid that, delete /etc/environment.d/99-bc250.conf and set the variable"
-echo -e "only in the environment of the one app you want encoding. See README.md"
-echo -e "(\"What the installers change, and how to undo it\")."
+echo -e "Note: LIBVA_DRIVER_NAME=bc250 was set ${BOLD}system-wide${NC}. This driver provides"
+echo -e "both hardware video encode and decode (H.264/HEVC). To scope it per-application"
+echo -e "instead, delete /etc/environment.d/99-bc250.conf and set the variable only in"
+echo -e "the environment of the apps you want. See README.md (\"What the installers change\")."
 
 echo
 echo -e "${YELLOW}${BOLD}Note: this installed the 64-bit driver only.${NC}"

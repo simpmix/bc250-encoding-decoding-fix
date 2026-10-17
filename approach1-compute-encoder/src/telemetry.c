@@ -1,4 +1,4 @@
-/* bc250-encoding-decoding-fix v0.5.2 - https://github.com/simpmix/bc250-encoding-decoding-fix */
+/* bc250-encoding-decoding-fix v0.5.4 - https://github.com/simpmix/bc250-encoding-decoding-fix */
 /*
  * Copyright (c) 2026 BC-250 Project Contributors
  * SPDX-License-Identifier: GPL-3.0-only
@@ -85,13 +85,16 @@ int bc250_telemetry_init(void) {
 #if HAVE_POSIX_SHM
     /* Open or create the shared memory file with 0666 permissions so user tools can read it */
     g_shm_fd = open(g_shm_path, O_RDWR | O_CREAT | O_CLOEXEC, 0666);
-    if (g_shm_fd < 0) {
+    if (g_shm_fd < 0 && (errno == EACCES || errno == EPERM)) {
         /* Fallback to /tmp if /dev/shm permission was denied */
-        if (errno == EACCES || errno == EPERM) {
-            const char *fallback = "/tmp/bc250_stats";
-            strncpy(g_shm_path, fallback, sizeof(g_shm_path) - 1);
-            g_shm_fd = open(g_shm_path, O_RDWR | O_CREAT | O_CLOEXEC, 0666);
-        }
+        const char *fallback = "/tmp/bc250_stats";
+        strncpy(g_shm_path, fallback, sizeof(g_shm_path) - 1);
+        g_shm_fd = open(g_shm_path, O_RDWR | O_CREAT | O_CLOEXEC, 0666);
+    }
+    if (g_shm_fd < 0 && (errno == EACCES || errno == EPERM)) {
+        /* Multi-user fallback: user-specific /tmp/bc250_stats_<uid> */
+        snprintf(g_shm_path, sizeof(g_shm_path), "/tmp/bc250_stats_%u", (unsigned int)getuid());
+        g_shm_fd = open(g_shm_path, O_RDWR | O_CREAT | O_CLOEXEC, 0666);
     }
 
     if (g_shm_fd < 0) {

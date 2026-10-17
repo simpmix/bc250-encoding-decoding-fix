@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bc250-encoding-decoding-fix v0.5.2 - https://github.com/simpmix/bc250-encoding-decoding-fix
+# bc250-encoding-decoding-fix v0.5.4 - https://github.com/simpmix/bc250-encoding-decoding-fix
 #
 # build_and_install.sh - Automated build, test, and installer for AMD BC-250 custom drivers
 #
@@ -243,11 +243,10 @@ echo
 echo -e "${BOLD}This changed your system in a few places.${NC} What, and how to undo it:"
 echo -e "  ${BOLD}sudo ./tools/bc250_uninstall.sh --dry-run${NC}   # list it, change nothing"
 echo -e "  ${BOLD}sudo ./tools/bc250_uninstall.sh${NC}             # remove it"
-echo -e "Note: LIBVA_DRIVER_NAME=bc250 was set ${BOLD}system-wide${NC}, and this driver is"
-echo -e "encode-only - so other apps lose hardware video ${BOLD}decode${NC} until it is removed."
-echo -e "To avoid that, delete /etc/environment.d/99-bc250.conf and set the variable"
-echo -e "only in the environment of the one app you want encoding. See README.md"
-echo -e "(\"What the installers change, and how to undo it\")."
+echo -e "Note: LIBVA_DRIVER_NAME=bc250 was set ${BOLD}system-wide${NC}. This driver provides"
+echo -e "both hardware video encode and decode (H.264/HEVC). To scope it per-application"
+echo -e "instead, delete /etc/environment.d/99-bc250.conf and set the variable only in"
+echo -e "the environment of the apps you want. See README.md (\"What the installers change\")."
 
 echo
 echo -e "${YELLOW}${BOLD}Note: this installed the 64-bit driver only.${NC}"

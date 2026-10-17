@@ -1,3 +1,16 @@
+bc250-vaapi (0.5.4-1) unstable; urgency=medium
+
+  * Runtime dynamic dlopen probing for libx264 and libx265 to eliminate DT_NEEDED SONAME lock-in.
+  * 32-bit multiarch library path resolution for Steam Link companion driver.
+  * Multi-user telemetry permissions fallback to per-UID shared memory buffers.
+  * DMA-BUF file descriptor leak fixes on Vulkan memory allocation failures.
+  * Thread and slice command-line flag parser honoring BC250_MAX_CPU_THREADS.
+  * Bounded NAL bitstream assembly preventing buffer overrun on payload spikes.
+  * Pthread condition variable lifecycle cleanup on initialization failures.
+  * Hardened zero-latency single-frame contracts for live and offline VA-API pipelines.
+
+ -- BC-250 Project Contributors <support@bc250.org>  Sat, 17 Oct 2026 19:00:00 +0530
+
 bc250-vaapi (0.5.2-1) unstable; urgency=medium
 
   * Add libx265 CPU fallback encoding for 100% 3D gaming contention isolation.

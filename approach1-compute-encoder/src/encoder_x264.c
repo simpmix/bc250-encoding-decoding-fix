@@ -185,6 +185,8 @@ static void load_x264_ops(void)
             "/usr/lib64/libx264.so",
             "/usr/lib/x86_64-linux-gnu/libx264.so",
             "/usr/lib/libx264.so",
+            "/usr/lib32/libx264.so",
+            "/usr/lib/i386-linux-gnu/libx264.so",
             NULL
         };
         for (int i = 0; search_paths[i]; i++) {
@@ -494,8 +496,13 @@ int h264_x264_encode(h264_x264_t *x, const h264_x264_config_t *cfg,
         size = x264_ops.encoder_encode(x->h, &nal, &n, NULL, &pic_out);
     if (size <= 0) return -1;
     if ((size_t)size > out_size) return -1;
-    memcpy(out, nal[0].p_payload, (size_t)size);
-    return size;
+    size_t total = 0;
+    for (int i = 0; i < n; i++) {
+        if (total + (size_t)nal[i].i_payload > out_size) return -1;
+        memcpy(out + total, nal[i].p_payload, (size_t)nal[i].i_payload);
+        total += (size_t)nal[i].i_payload;
+    }
+    return (int)total;
 }
 
 void h264_x264_destroy(h264_x264_t *x)

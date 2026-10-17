@@ -175,6 +175,8 @@ static void load_x265_ops(void)
             "/usr/lib64/libx265.so",
             "/usr/lib/x86_64-linux-gnu/libx265.so",
             "/usr/lib/libx265.so",
+            "/usr/lib32/libx265.so",
+            "/usr/lib/i386-linux-gnu/libx265.so",
             NULL
         };
         for (int i = 0; search_paths[i]; i++) {
@@ -280,6 +282,62 @@ struct hevc_x265 {
     size_t i420_cap;
 };
 
+static int get_cmdline_threads(void)
+{
+#if defined(__linux__)
+    static int cached_threads = -1;
+    if (cached_threads != -1) return cached_threads;
+
+    FILE *f = fopen("/proc/self/cmdline", "rb");
+    if (!f) {
+        cached_threads = 0;
+        return 0;
+    }
+
+    char buf[4096];
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    if (n == 0) {
+        cached_threads = 0;
+        return 0;
+    }
+    buf[n] = '\0';
+
+    size_t pos = 0;
+    while (pos < n) {
+        const char *arg = buf + pos;
+        size_t len = strlen(arg);
+
+        if ((strcmp(arg, "-threads") == 0 || strcmp(arg, "--threads") == 0 ||
+             strcmp(arg, "-slices") == 0 || strcmp(arg, "--slices") == 0) && (pos + len + 1 < n)) {
+            const char *val = buf + pos + len + 1;
+            int t = atoi(val);
+            if (t >= 1 && t <= 64) {
+                cached_threads = t;
+                return cached_threads;
+            }
+        } else if (strncmp(arg, "-threads=", 9) == 0 || strncmp(arg, "--threads=", 10) == 0) {
+            const char *val = strchr(arg, '=') + 1;
+            int t = atoi(val);
+            if (t >= 1 && t <= 64) {
+                cached_threads = t;
+                return cached_threads;
+            }
+        } else if (strncmp(arg, "-slices=", 8) == 0 || strncmp(arg, "--slices=", 9) == 0) {
+            const char *val = strchr(arg, '=') + 1;
+            int t = atoi(val);
+            if (t >= 1 && t <= 64) {
+                cached_threads = t;
+                return cached_threads;
+            }
+        }
+        pos += len + 1;
+    }
+    cached_threads = 0;
+#endif
+    return 0;
+}
+
 static int threads_for(const hevc_x265_config_t *cfg)
 {
     const char *env = getenv("BC250_X265_THREADS");
@@ -289,6 +347,13 @@ static int threads_for(const hevc_x265_config_t *cfg)
         int t = atoi(env);
         if (t >= 0 && t <= 64) return t;
     }
+    const char *env_max = getenv("BC250_MAX_CPU_THREADS");
+    if (env_max && *env_max) {
+        int t = atoi(env_max);
+        if (t >= 0 && t <= 64) return t;
+    }
+    int cmd_t = get_cmdline_threads();
+    if (cmd_t > 0 && cmd_t <= 64) return cmd_t;
     (void)cfg;
     return 4;
 }
@@ -336,7 +401,14 @@ static int open_encoder(hevc_x265_t *x, const hevc_x265_config_t *cfg)
     x->preset = hevc_x265_preset_for(cfg);
     x->threads = threads_for(cfg);
 
-    const char *tune = cfg->live ? "zerolatency" : NULL;
+    const char *tune = "zerolatency";
+    const char *env_tune = getenv("BC250_X265_TUNE");
+    if (env_tune && *env_tune) {
+        tune = env_tune;
+    } else if (!cfg->live) {
+        const char *env_offline_tune = getenv("BC250_X265_OFFLINE_TUNE");
+        if (env_offline_tune && *env_offline_tune) tune = env_offline_tune;
+    }
     if (x265_ops.param_default_preset(&x->param, x->preset, tune) < 0) {
         fprintf(stderr, "[bc250-x265] unknown preset '%s'\n", x->preset);
         return -1;
@@ -366,7 +438,7 @@ static int open_encoder(hevc_x265_t *x, const hevc_x265_config_t *cfg)
         if (env_b && *env_b) {
             x->param.bframes = atoi(env_b);
         } else {
-            x->param.bframes = 2; /* 2 B-frames for offline transcode efficiency */
+            x->param.bframes = 0; /* Zero-latency single-frame contract for VA-API */
         }
     }
 
@@ -440,6 +512,10 @@ int hevc_x265_encode(hevc_x265_t *x, const hevc_x265_config_t *cfg,
         x->i420_u = malloc(plane_sz);
         x->i420_v = malloc(plane_sz);
         if (!x->i420_u || !x->i420_v) {
+            free(x->i420_u);
+            free(x->i420_v);
+            x->i420_u = NULL;
+            x->i420_v = NULL;
             x->i420_cap = 0;
             return -1;
         }
@@ -496,7 +572,7 @@ int hevc_x265_encode(hevc_x265_t *x, const hevc_x265_config_t *cfg,
 
     size_t total = 0;
     for (uint32_t i = 0; i < pi_nal; i++) {
-        if (total + nal[i].sizeBytes > out_cap) break;
+        if (total + nal[i].sizeBytes > out_cap) return -1;
         memcpy(out + total, nal[i].payload, nal[i].sizeBytes);
         total += nal[i].sizeBytes;
     }

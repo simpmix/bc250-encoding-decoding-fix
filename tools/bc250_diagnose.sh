@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bc250-encoding-decoding-fix v0.5.2 - https://github.com/simpmix/bc250-encoding-decoding-fix
+# bc250-encoding-decoding-fix v0.5.4 - https://github.com/simpmix/bc250-encoding-decoding-fix
 #
 # bc250_diagnose.sh - Comprehensive hardware verification, VA-API test, and encode benchmark
 #
@@ -94,11 +94,11 @@ for dri in "${DRI_CANDIDATES[@]}"; do
 
         # Probe optional runtime CPU encoding libraries (loaded via dlopen)
         FOUND_X264=0
-        if (command -v ldconfig &>/dev/null && ldconfig -p 2>/dev/null | grep -q "libx264\.so") || [ -n "$(find /usr/lib* /usr/local/lib* -name 'libx264.so*' 2>/dev/null | head -n 1)" ]; then
+        if (command -v ldconfig &>/dev/null && ldconfig -p 2>/dev/null | grep -q "libx264\.so") || [ -n "$(find /usr/lib* /usr/local/lib* -maxdepth 3 -name 'libx264.so*' 2>/dev/null | head -n 1)" ]; then
             FOUND_X264=1
         fi
         FOUND_X265=0
-        if (command -v ldconfig &>/dev/null && ldconfig -p 2>/dev/null | grep -q "libx265\.so") || [ -n "$(find /usr/lib* /usr/local/lib* -name 'libx265.so*' 2>/dev/null | head -n 1)" ]; then
+        if (command -v ldconfig &>/dev/null && ldconfig -p 2>/dev/null | grep -q "libx265\.so") || [ -n "$(find /usr/lib* /usr/local/lib* -maxdepth 3 -name 'libx265.so*' 2>/dev/null | head -n 1)" ]; then
             FOUND_X265=1
         fi
         if [ $FOUND_X264 -eq 1 ]; then
@@ -138,7 +138,7 @@ for dri32 in "/usr/lib32/dri" "/usr/lib/i386-linux-gnu/dri"; do
 done
 if [ $FOUND_32BIT_DRIVER -eq 0 ]; then
     echo -e "  ${YELLOW}! 32-bit companion driver not found in /usr/lib32/dri (required for Steam Link).${NC}"
-    echo -e "    Run: ./tools/build_32bit.sh or install from release v0.5.2 bundle."
+    echo -e "    Run: ./tools/build_32bit.sh or install from release v0.5.4 bundle."
 fi
 
 FOUND_SHADERS=0

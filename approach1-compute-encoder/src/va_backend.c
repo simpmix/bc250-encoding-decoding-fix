@@ -2447,6 +2447,7 @@ VAStatus bc250_Initialize(VADriverContextP ctx, int *major_version, int *minor_v
 
     if (gpu_compute_init(&data->gpu) != 0) {
         fprintf(stderr, "[bc250-drv] Failed to initialize Vulkan compute backend!\n");
+        pthread_cond_destroy(&data->idle);
         pthread_mutex_destroy(&data->lock);
         free(data);
         return VA_STATUS_ERROR_OPERATION_FAILED;

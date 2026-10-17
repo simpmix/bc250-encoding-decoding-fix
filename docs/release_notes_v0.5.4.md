@@ -1,0 +1,40 @@
+# Release v0.5.4: Production Hardening, Dynamic Runtime Probing & Multi-User Telemetry
+
+Release **v0.5.4** is a critical stability, hardening, and production-readiness update for the **AMD BC-250 (Cyan Skillfish)** custom VA-API driver. It eliminates hard-coded library SONAME lock-ins via runtime `dlopen()` symbol probing, introduces 32-bit multiarch library path resolution for Steam Link, resolves DMA-BUF file descriptor leaks and pthread lifecycle leaks, hardens multi-user shared-memory telemetry collisions, and standardizes zero-latency single-frame contracts across both live streaming and offline transcoding workloads.
+
+### 🚀 Key Highlights & Critical Improvements
+
+#### 1. Runtime Dynamic `dlopen()` Probing for `libx264` and `libx265`
+* **Zero Hard-Coded DT_NEEDED SONAME Dependencies**: Previously, building the driver on a specific distribution linked against exact library SONAMEs (such as `libx264.so.163` or `libx265.so.199`). If deployed on distributions with differing versions (e.g. Ubuntu 24.04, Fedora 40, Arch Linux) or systems where x264/x265 were not installed, the VA-API driver failed to load entirely.
+* **Dynamic Symbol Discovery**: Both [`approach1-compute-encoder/src/encoder_x264.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/encoder_x264.c) and [`approach1-compute-encoder/src/encoder_x265.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/encoder_x265.c) now resolve libraries dynamically at runtime via `dlopen()` and `dlsym()`. Symbol discovery iterates across version-specific symbols (`x264_encoder_open_###`, `x265_api_get_###`), seamlessly adapting to whichever library version is present.
+* **Graceful Compute Fallback**: If neither library is installed on the host, the driver operates cleanly without crashing, delegating encoding to the Vulkan GPU compute backend.
+
+#### 2. Multiarch 32-Bit Companion Driver Resolution (Steam Link)
+* **32-Bit Multiarch Library Paths**: Added `/usr/lib32/` and `/usr/lib/i386-linux-gnu/` search paths to the x264 and x265 runtime loaders.
+* **Steam Link Compatibility**: When built for 32-bit via `./tools/build_32bit.sh` (`-DBUILD_32BIT=ON`), the companion driver loaded into 32-bit Steam Link companion runtimes can now successfully discover 32-bit CPU offload libraries, preventing unwanted fallback to unaccelerated software encoding.
+
+#### 3. Multi-User Telemetry Collision Resilience
+* **Per-UID Shared Memory Fallbacks**: In [`approach1-compute-encoder/src/telemetry.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/telemetry.c), when `/dev/shm/bc250_stats` or `/tmp/bc250_stats` exists and is owned by a different user (returning `EACCES` or `EPERM`), the driver automatically falls back to `/tmp/bc250_stats_<uid>`.
+* **Dynamic Diagnostic Probing**: Updated [`tools/bc250_stats.c`](file:///D:/Kai/bc250-encoding-decoding-fix/tools/bc250_stats.c) to probe the default paths as well as the active user's `/tmp/bc250_stats_<uid>`, ensuring telemetry inspection tools function seamlessly in multi-user desktop and rootless container environments.
+
+#### 4. DMA-BUF File Descriptor Leak Prevention
+* **Vulkan Import Compliance**: In [`approach1-compute-encoder/src/gpu_compute.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/gpu_compute.c), `gpu_compute_import_dmabuf_image()` duplicates DMA-BUF file descriptors before importing them into Vulkan memory. Per Vulkan specification, memory import only transfers descriptor ownership on `VK_SUCCESS`.
+* **Complete Descriptor Cleanup**: Explicitly close duplicated file descriptors (`dup_fd` and `dup_fd2`) whenever `vkAllocateMemory` returns failure, preventing socket and file descriptor exhaustion during rapid surface reconfiguration under memory pressure.
+
+#### 5. Resource Lifecycle & Concurrency Hardening
+* **Pthread Condition Variable Destruction**: In [`approach1-compute-encoder/src/va_backend.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/va_backend.c), added missing `pthread_cond_destroy(&data->idle)` in `bc250_Initialize()` failure paths before destroying mutex locks and freeing driver state.
+* **Safe Realloc Checks & Resource Freeing**: In [`approach1-compute-encoder/src/encoder_h265.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/encoder_h265.c), verified that buffer reallocation for `x265_y` and `x265_uv` succeeds before advancing buffer capacity `x265_cap`. In `hevc_encoder_destroy()`, unconditionally freed `x265_y` and `x265_uv` buffers to eliminate memory leaks during encoder teardown.
+* **Heap Cleanup on Chroma Allocation Failure**: In [`approach1-compute-encoder/src/encoder_x265.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/encoder_x265.c), guaranteed that `x->i420_u` is freed if allocation for `x->i420_v` fails.
+
+#### 6. Command-Line Thread Concurrency & Zero-Latency Single-Frame Contract
+* **Direct `/proc/self/cmdline` Parsing**: Implemented `get_cmdline_threads()` in `encoder_x265.c` to parse `-threads`, `--threads`, `-slices`, and `--slices` command-line flags. Respects `BC250_MAX_CPU_THREADS` and `BC250_X265_THREADS` environment variables to strictly limit thread contention against running games.
+* **Zero-Latency Transcode Pipeline**: Standardized `open_encoder()` on `tune="zerolatency"` and `bframes=0` by default across both live streaming and offline transcode modes. In VA-API pipelines, intermediate lookahead and B-frame reordering cause frame stalls and pipeline drops; enforcing `bframes=0` preserves the single-frame input/output contract expected by video encoding clients.
+
+#### 7. Bounded NAL Bitstream Assembly
+* **Overrun Protection**: In [`approach1-compute-encoder/src/encoder_x264.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/encoder_x264.c) and [`approach1-compute-encoder/src/encoder_x265.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/encoder_x265.c), replaced monolithic NAL copies with bounded per-NAL loops. If total payload size exceeds output buffer capacity `out_cap`, the encoder returns an error code immediately rather than silently writing truncated or corrupted bitstream packets.
+
+#### 8. Packaging, Diagnostics & Documentation Polish
+* **Modernized Diagnostic Script**: Added `-maxdepth 3` constraints to library discovery in [`tools/bc250_diagnose.sh`](file:///D:/Kai/bc250-encoding-decoding-fix/tools/bc250_diagnose.sh) to eliminate sluggish filesystem traversal on deep directory trees.
+* **Installer Repository URL Modernization**: Updated repository URLs and download links in [`tools/setup_bazzite.sh`](file:///D:/Kai/bc250-encoding-decoding-fix/tools/setup_bazzite.sh), [`tools/setup_steamos.sh`](file:///D:/Kai/bc250-encoding-decoding-fix/tools/setup_steamos.sh), and [`tools/bc250_lab.sh`](file:///D:/Kai/bc250-encoding-decoding-fix/tools/bc250_lab.sh) to point to the canonical `simpmix/bc250-encoding-decoding-fix` repository.
+* **Capabilities Notice Update**: Removed legacy "encode-only" notices across [`build_and_install.sh`](file:///D:/Kai/bc250-encoding-decoding-fix/build_and_install.sh), [`tools/setup_bazzite.sh`](file:///D:/Kai/bc250-encoding-decoding-fix/tools/setup_bazzite.sh), and [`tools/setup_steamos.sh`](file:///D:/Kai/bc250-encoding-decoding-fix/tools/setup_steamos.sh) to accurately communicate full hardware video encoding and decoding (`VAEntrypointVLD`) capabilities.
+* **Version Standardization**: Synchronized project versioning to **v0.5.4** across [`approach1-compute-encoder/CMakeLists.txt`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/CMakeLists.txt), [`audio-fix/dkms.conf`](file:///D:/Kai/bc250-encoding-decoding-fix/audio-fix/dkms.conf), and [`packaging/debian/changelog`](file:///D:/Kai/bc250-encoding-decoding-fix/packaging/debian/changelog).

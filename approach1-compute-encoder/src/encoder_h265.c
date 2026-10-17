@@ -959,9 +959,9 @@ void hevc_encoder_destroy(hevc_encoder_t *encoder)
     free(encoder->hpel_tmp);
     if (encoder->x265) {
         hevc_x265_destroy(encoder->x265);
-        free(encoder->x265_y);
-        free(encoder->x265_uv);
     }
+    free(encoder->x265_y);
+    free(encoder->x265_uv);
     free(encoder);
 }
 
@@ -1878,6 +1878,7 @@ int hevc_encoder_encode_frame(hevc_encoder_t *encoder,
             if (ny) encoder->x265_y = ny;
             uint8_t *nuv = realloc(encoder->x265_uv, need);
             if (nuv) encoder->x265_uv = nuv;
+            if (!ny || !nuv) return -1;
             encoder->x265_cap = need;
         }
         if (gpu_compute_download_nv12(gpu_ctx, &input_surface, input_memory,

@@ -65,7 +65,7 @@
 set -uo pipefail
 
 LAB="${BC250_LAB_DIR:-/var/home/user/bc250-lab}"
-REPO_URL="${BC250_LAB_REPO:-https://github.com/Shalasere/bc250-vulkan-encode-stopgap.git}"
+REPO_URL="${BC250_LAB_REPO:-https://github.com/simpmix/bc250-encoding-decoding-fix.git}"
 REPO="$LAB/repo"
 ART="$LAB/artifacts"
 WORK="$LAB/work"

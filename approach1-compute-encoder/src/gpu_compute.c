@@ -2211,11 +2211,15 @@ int gpu_compute_import_dmabuf_image(gpu_context_t *ctx,
 
     result = vkAllocateMemory(ctx->device, &alloc_info, NULL, &memory->memory);
     if (result != VK_SUCCESS) {
+        close(dup_fd);
         int dup_fd2 = dup(dma_buf_fd);
         if (dup_fd2 >= 0) {
             import_info.fd = dup_fd2;
             alloc_info.memoryTypeIndex = find_memory_type(ctx->physical_device, mem_bits, 0);
             result = vkAllocateMemory(ctx->device, &alloc_info, NULL, &memory->memory);
+            if (result != VK_SUCCESS) {
+                close(dup_fd2);
+            }
         }
     }
     if (result != VK_SUCCESS) {

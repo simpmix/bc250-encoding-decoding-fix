@@ -1,4 +1,4 @@
-/* bc250-encoding-decoding-fix v0.5.2 - https://github.com/simpmix/bc250-encoding-decoding-fix */
+/* bc250-encoding-decoding-fix v0.5.4 - https://github.com/simpmix/bc250-encoding-decoding-fix */
 /*
  * Copyright (c) 2026 BC-250 Project Contributors
  * SPDX-License-Identifier: GPL-3.0-only
@@ -247,6 +247,20 @@ int main(int argc, char **argv) {
     do {
         bc250_telemetry_layout_t data;
         int rc = read_telemetry_snapshot(shm_path, &data);
+#if HAVE_POSIX_SHM
+        if (rc != 0 && !getenv("BC250_STATS_PATH")) {
+            if (strcmp(shm_path, "/tmp/bc250_stats") != 0) {
+                rc = read_telemetry_snapshot("/tmp/bc250_stats", &data);
+                if (rc == 0) shm_path = "/tmp/bc250_stats";
+            }
+            if (rc != 0) {
+                static char uid_path[256];
+                snprintf(uid_path, sizeof(uid_path), "/tmp/bc250_stats_%u", (unsigned int)getuid());
+                rc = read_telemetry_snapshot(uid_path, &data);
+                if (rc == 0) shm_path = uid_path;
+            }
+        }
+#endif
 
         if (rc != 0) {
             if (opt_watch) {
