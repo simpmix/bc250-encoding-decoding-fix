@@ -21,7 +21,7 @@ extern char *program_invocation_short_name;
 
 static const char *const x265_presets[] = {
     "ultrafast", "superfast", "veryfast", "faster", "fast",
-    "medium", "slow", "slower", "veryslow", "placebo"
+    "medium", "slow", "slower", "veryslow", "placebo", NULL
 };
 
 static const char *get_cmdline_preset(void)

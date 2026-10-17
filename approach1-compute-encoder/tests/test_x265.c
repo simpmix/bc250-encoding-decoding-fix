@@ -214,6 +214,19 @@ int main(void)
         printf("[test_x265] %-32s ok\n", "Dynamic bitrate reconfig");
     }
 
+    /* Preset selection validation */
+    {
+        hevc_x265_config_t pcfg = base;
+        pcfg.live = true;
+        assert(strcmp(hevc_x265_preset_for(&pcfg), "ultrafast") == 0);
+        pcfg.quality_level = 2;
+        assert(strcmp(hevc_x265_preset_for(&pcfg), "superfast") == 0);
+        pcfg.live = false;
+        pcfg.quality_level = 1;
+        assert(hevc_x265_preset_for(&pcfg) != NULL);
+        printf("[test_x265] %-32s ok\n", "Preset selection logic");
+    }
+
     printf("[test_x265] all tests passed!\n");
     return 0;
 }

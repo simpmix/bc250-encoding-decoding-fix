@@ -74,6 +74,7 @@ static void run(const char *what, h264_x264_config_t cfg, int frames, int idr_at
 
 int main(void)
 {
+    setvbuf(stdout, NULL, _IONBF, 0);
     const h264_x264_config_t base = {
         .width = W, .height = H, .fps = 30, .gop = 1000,
         .rc_mode = RC_CQP, .qp = 26, .quality_level = 4, .profile_idc = 100,
