@@ -182,6 +182,25 @@ for d in "${DRI_DIRS[@]}"; do
     fi
 done
 
+# Install real-time telemetry monitor (bc250_stats)
+STATS_SRC=""
+if [ -f "$SCRIPT_DIR/approach1-compute-encoder/build/bc250_stats" ]; then
+    STATS_SRC="$SCRIPT_DIR/approach1-compute-encoder/build/bc250_stats"
+elif [ -f "$SCRIPT_DIR/tools/bc250_stats" ]; then
+    STATS_SRC="$SCRIPT_DIR/tools/bc250_stats"
+fi
+if [ -n "$STATS_SRC" ]; then
+    for bindir in /usr/local/bin /usr/bin; do
+        if [ -d "$bindir" ]; then
+            if $SUDO cp -f "$STATS_SRC" "$bindir/bc250_stats" 2>/dev/null; then
+                $SUDO chmod 755 "$bindir/bc250_stats" 2>/dev/null || true
+                echo -e "  ${GREEN}-> Installed telemetry monitor to $bindir/bc250_stats${NC}"
+                break
+            fi
+        fi
+    done
+fi
+
 if [ "$INSTALLED_DRIVER" -eq 0 ]; then
     echo -e "\n${RED}${BOLD}Error: could not install bc250_drv_video.so into any DRI driver path.${NC}"
     echo -e "${RED}Every candidate directory was missing or read-only (this is expected on${NC}"

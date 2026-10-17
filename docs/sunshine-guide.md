@@ -164,3 +164,14 @@ In the Sunshine Web UI (**Configuration -> Audio/Video -> adapter_name**):
 
 #### 4. Green Screen Resolution in v0.5.1+
 * If you previously experienced a solid green screen or blank screen when connecting in Gaming Mode, update to driver release **v0.5.1** or newer. Release v0.5.1 fixes `bc250_CreateSurfaces2` to reject un-imported DMA-BUF external memory types (`DRM_PRIME_2`), forcing Sunshine to execute its working OpenGL/EGL blit path (`vaExportSurfaceHandle`) rather than encoding an uninitialized buffer.
+
+### 5. MangoHud On-Screen Telemetry in Game Mode
+To monitor encoder latency and governor tier status in real time while playing games on your television:
+```bash
+./tools/apply_mangohud_preset.sh
+```
+* **Steam Gaming Mode**: Press the Quick Access button (`...` or `Guide + A`), open the **Performance** tab, and set the **Performance Overlay Level** slider to 2, 3, or 4.
+* **On-Screen Display**: While Sunshine streams, MangoHud displays:
+  `BC250: [T0 GPU] 2.8ms | 60fps | 20.0M`
+* **Zero Clutter**: When no stream is active, the BC-250 metric stays completely silent and hidden.
+* **Uninstall**: Run `./tools/apply_mangohud_preset.sh --remove`.

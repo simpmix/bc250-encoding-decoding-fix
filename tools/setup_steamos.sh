@@ -183,6 +183,21 @@ if [ "$SPV_COUNT" -eq 0 ]; then
 fi
 echo -e "  ${GREEN}✓ Installed $SPV_COUNT compiled shader(s)${NC}"
 
+# Install real-time telemetry monitor (bc250_stats)
+STATS_SRC=""
+if [ -f "$REPO_ROOT/approach1-compute-encoder/build/bc250_stats" ]; then
+    STATS_SRC="$REPO_ROOT/approach1-compute-encoder/build/bc250_stats"
+elif [ -f "$REPO_ROOT/tools/bc250_stats" ]; then
+    STATS_SRC="$REPO_ROOT/tools/bc250_stats"
+fi
+if [ -n "$STATS_SRC" ]; then
+    $SUDO mkdir -p /usr/local/bin
+    if $SUDO cp -f "$STATS_SRC" /usr/local/bin/bc250_stats 2>/dev/null; then
+        $SUDO chmod 755 /usr/local/bin/bc250_stats
+        echo -e "  ${GREEN}✓ Installed telemetry monitor to /usr/local/bin/bc250_stats${NC}"
+    fi
+fi
+
 echo -e "\n${BOLD}[4/5] Configuring SteamOS Gamescope & Session Environment...${NC}"
 # /etc/environment.d is persistent across SteamOS updates and read by Gamescope / systemd
 $SUDO mkdir -p /etc/environment.d

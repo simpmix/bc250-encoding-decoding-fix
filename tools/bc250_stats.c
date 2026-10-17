@@ -32,6 +32,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <signal.h>
 #define HAVE_POSIX_SHM 1
 #else
 #include <windows.h>
@@ -215,10 +216,76 @@ static void print_json(const bc250_telemetry_layout_t *t) {
     printf("}\n");
 }
 
+static bool is_telemetry_active(const bc250_telemetry_layout_t *t) {
+    if (!t || t->magic != BC250_TELEMETRY_MAGIC || t->total_frames == 0) return false;
+#if HAVE_POSIX_SHM
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) == 0 && t->timestamp_ns > 0) {
+        uint64_t now_ns = (uint64_t)now.tv_sec * 1000000000ull + (uint64_t)now.tv_nsec;
+        if (now_ns >= t->timestamp_ns && (now_ns - t->timestamp_ns) > 4000000000ull) {
+            return false; /* No updates for 4 seconds */
+        }
+    }
+    if (t->pid > 0) {
+        if (kill((pid_t)t->pid, 0) != 0 && errno == ESRCH) {
+            return false; /* Process is terminated */
+        }
+    }
+#endif
+    return true;
+}
+
+static void print_hud(const bc250_telemetry_layout_t *t, bool show_idle) {
+    if (!is_telemetry_active(t)) {
+        if (show_idle) {
+            printf("BC250: Idle\n");
+        }
+        return;
+    }
+
+    const char *short_tier = "T0 GPU";
+    if (t->current_tier == 1) short_tier = "T1 Fast";
+    else if (t->current_tier == 2) short_tier = "T2 CPU";
+    else if (t->current_tier == 3) short_tier = "T3 Skip";
+
+    double fps = t->measured_fps > 0.0 ? t->measured_fps : (t->target_fps > 0.0 ? t->target_fps : 60.0);
+    double latency = t->last_gpu_latency_ms > 0.0 ? t->last_gpu_latency_ms : t->ema_gpu_latency_ms;
+    double bitrate_mb = (double)t->target_bitrate / 1000000.0;
+
+    if (t->dropped_frames_prevented > 0) {
+        printf("BC250: [%s] %.1fms | %.0ffps | %.1fM (saved %llu)\n",
+               short_tier, latency, fps, bitrate_mb,
+               (unsigned long long)t->dropped_frames_prevented);
+    } else {
+        printf("BC250: [%s] %.1fms | %.0ffps | %.1fM\n",
+               short_tier, latency, fps, bitrate_mb);
+    }
+}
+
+static void print_compact(const bc250_telemetry_layout_t *t) {
+    if (!is_telemetry_active(t)) {
+        printf("[BC-250] Idle (No active encoder stream)\n");
+        return;
+    }
+
+    const char *pname = t->process_name[0] ? t->process_name : "encoder";
+    const char *tier_label = t->tier_name[0] ? t->tier_name : "Active";
+    double fps = t->measured_fps > 0.0 ? t->measured_fps : t->target_fps;
+
+    printf("[BC-250] %s (PID %u) | Tier %u [%s] | Latency: %.2fms (EMA: %.2fms) | %.1ffps | %u kbps | QP %u | Drops Prev: %llu\n",
+           pname, t->pid, t->current_tier, tier_label,
+           t->last_gpu_latency_ms, t->ema_gpu_latency_ms,
+           fps, t->target_bitrate / 1000, t->current_qp,
+           (unsigned long long)t->dropped_frames_prevented);
+}
+
 int main(int argc, char **argv) {
     bool opt_watch = false;
     bool opt_json = false;
     bool opt_raw = false;
+    bool opt_hud = false;
+    bool opt_hud_all = false;
+    bool opt_compact = false;
     double opt_interval = 1.0;
 
     for (int i = 1; i < argc; i++) {
@@ -228,12 +295,22 @@ int main(int argc, char **argv) {
             opt_json = true;
         } else if (strcmp(argv[i], "-r") == 0 || strcmp(argv[i], "--raw") == 0) {
             opt_raw = true;
+        } else if (strcmp(argv[i], "--hud") == 0) {
+            opt_hud = true;
+        } else if (strcmp(argv[i], "--hud-all") == 0) {
+            opt_hud = true;
+            opt_hud_all = true;
+        } else if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--compact") == 0) {
+            opt_compact = true;
         } else if ((strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--interval") == 0) && i + 1 < argc) {
             opt_interval = atof(argv[++i]);
             if (opt_interval < 0.1) opt_interval = 0.1;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printf("Usage: bc250_stats [options]\n");
             printf("Options:\n");
+            printf("  --hud                  Compact single-line output for MangoHud/OSD (silent when idle)\n");
+            printf("  --hud-all              Single-line OSD output (shows 'BC250: Idle' when idle)\n");
+            printf("  -c, --compact          Compact single-line summary output\n");
             printf("  -w, --watch            Continuously refresh display (live monitor)\n");
             printf("  -i, --interval <sec>   Watch refresh interval in seconds (default: 1.0)\n");
             printf("  -j, --json             Output metrics as structured JSON\n");
@@ -291,7 +368,13 @@ int main(int argc, char **argv) {
         }
 #endif
 
-        if (rc != 0) {
+        if (opt_hud) {
+            print_hud(&data, opt_hud_all);
+            if (!opt_watch) return 0;
+        } else if (opt_compact) {
+            print_compact(&data);
+            if (!opt_watch) return 0;
+        } else if (rc != 0) {
             if (opt_watch) {
                 printf("\033[H\033[J");
             }

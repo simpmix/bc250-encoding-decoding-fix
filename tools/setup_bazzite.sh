@@ -156,10 +156,25 @@ if [ "$SPV_COUNT" -eq 0 ]; then
 fi
 echo -e "  ${GREEN}✓ Installed $SPV_COUNT compiled shader(s)${NC}"
 
+# Install real-time telemetry monitor (bc250_stats)
+STATS_SRC=""
+if [ -f "$REPO_ROOT/approach1-compute-encoder/build/bc250_stats" ]; then
+    STATS_SRC="$REPO_ROOT/approach1-compute-encoder/build/bc250_stats"
+elif [ -f "$REPO_ROOT/tools/bc250_stats" ]; then
+    STATS_SRC="$REPO_ROOT/tools/bc250_stats"
+fi
+if [ -n "$STATS_SRC" ]; then
+    $SUDO mkdir -p /usr/local/bin
+    if $SUDO cp -f "$STATS_SRC" /usr/local/bin/bc250_stats 2>/dev/null; then
+        $SUDO chmod 755 /usr/local/bin/bc250_stats
+        echo -e "  ${GREEN}✓ Installed telemetry monitor to /usr/local/bin/bc250_stats${NC}"
+    fi
+fi
+
 # Restore SELinux security contexts on Bazzite / Fedora Silverblue
 if command -v restorecon &> /dev/null; then
     echo -e "  -> Applying SELinux file contexts on /usr/local..."
-    $SUDO restorecon -Rv "$INSTALL_LIB_DIR" "$INSTALL_LIB_FALLBACK" "$INSTALL_SHADER_DIR" 2>/dev/null || true
+    $SUDO restorecon -Rv "$INSTALL_LIB_DIR" "$INSTALL_LIB_FALLBACK" "$INSTALL_SHADER_DIR" /usr/local/bin/bc250_stats 2>/dev/null || true
 fi
 
 echo -e "\n${BOLD}[4/5] Configuring Gamescope & User Environment...${NC}"

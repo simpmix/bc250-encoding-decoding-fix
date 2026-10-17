@@ -132,6 +132,13 @@ To configure WiVRn for ~36ms motion-to-photon latency and ~190 Mbps throughput:
 ```
 *Recommended Topology*: 2 Hardware VA-API streams (`left_eye` and `right_eye`) + 1 Software stream (alpha/foveation). See [`docs/wivrn-guide.md`](docs/wivrn-guide.md).
 
+### MangoHud & Steam Gaming Mode Performance Overlay
+To display real-time BC-250 encode latency, governor tiers, framerate, and bitrate on-screen inside running games:
+```bash
+./tools/apply_mangohud_preset.sh
+```
+*In Steam Gaming Mode (Bazzite / SteamOS), open Quick Access (`...`) -> Performance -> set Performance Overlay to Level 2, 3, or 4.*
+
 ## Key Environment Variables
 
 | Variable | Default | Purpose |
