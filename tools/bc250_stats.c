@@ -31,6 +31,7 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #define HAVE_POSIX_SHM 1
 #else
 #include <windows.h>
@@ -258,6 +259,34 @@ int main(int argc, char **argv) {
                 snprintf(uid_path, sizeof(uid_path), "/tmp/bc250_stats_%u", (unsigned int)getuid());
                 rc = read_telemetry_snapshot(uid_path, &data);
                 if (rc == 0) shm_path = uid_path;
+            }
+            if (rc != 0) {
+                const char *sudo_uid = getenv("SUDO_UID");
+                if (sudo_uid && *sudo_uid) {
+                    static char sudo_path[256];
+                    snprintf(sudo_path, sizeof(sudo_path), "/tmp/bc250_stats_%s", sudo_uid);
+                    rc = read_telemetry_snapshot(sudo_path, &data);
+                    if (rc == 0) shm_path = sudo_path;
+                }
+            }
+            if (rc != 0) {
+                /* Scan /tmp for any active bc250_stats_* file */
+                DIR *d = opendir("/tmp");
+                if (d) {
+                    struct dirent *ent;
+                    while ((ent = readdir(d)) != NULL) {
+                        if (strncmp(ent->d_name, "bc250_stats_", 12) == 0) {
+                            static char cand[256];
+                            snprintf(cand, sizeof(cand), "/tmp/%s", ent->d_name);
+                            if (read_telemetry_snapshot(cand, &data) == 0) {
+                                shm_path = cand;
+                                rc = 0;
+                                break;
+                            }
+                        }
+                    }
+                    closedir(d);
+                }
             }
         }
 #endif

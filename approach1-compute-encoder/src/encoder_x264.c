@@ -498,7 +498,7 @@ int h264_x264_encode(h264_x264_t *x, const h264_x264_config_t *cfg,
     if ((size_t)size > out_size) return -1;
     size_t total = 0;
     for (int i = 0; i < n; i++) {
-        if (total + (size_t)nal[i].i_payload > out_size) return -1;
+        if ((size_t)nal[i].i_payload > out_size - total) return -1;
         memcpy(out + total, nal[i].p_payload, (size_t)nal[i].i_payload);
         total += (size_t)nal[i].i_payload;
     }

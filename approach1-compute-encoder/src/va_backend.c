@@ -2471,12 +2471,8 @@ VAStatus bc250_Initialize(VADriverContextP ctx, int *major_version, int *minor_v
     if (!max_t) max_t = getenv("BC250_THREADS");
     if (!max_t) max_t = getenv("BC250_CPU_THREADS");
     int def_threads = 4;
-    if (max_t && *max_t) {
-        int v = atoi(max_t);
-        if (v > 0 && v <= 16) def_threads = v;
-    }
 #if defined(__linux__)
-    else if (program_invocation_short_name) {
+    if (program_invocation_short_name) {
         if (strcmp(program_invocation_short_name, "sunshine") == 0 ||
             strcmp(program_invocation_short_name, "steam") == 0 ||
             strcmp(program_invocation_short_name, "streaming_client") == 0) {
@@ -2492,6 +2488,10 @@ VAStatus bc250_Initialize(VADriverContextP ctx, int *major_version, int *minor_v
 #endif
     int cmd_t = get_cmdline_threads();
     if (cmd_t > 0 && cmd_t <= 16) def_threads = cmd_t;
+    if (max_t && *max_t) {
+        int v = atoi(max_t);
+        if (v > 0 && v <= 16) def_threads = v;
+    }
     omp_set_num_threads(def_threads);
 #endif
 

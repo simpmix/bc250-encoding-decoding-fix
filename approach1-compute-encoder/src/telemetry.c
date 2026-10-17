@@ -101,6 +101,9 @@ int bc250_telemetry_init(void) {
         return -1;
     }
 
+    /* Explicitly ensure 0666 permissions so user-level monitoring tools can read it regardless of umask */
+    fchmod(g_shm_fd, 0666);
+
     /* Size the file to fit the telemetry struct */
     size_t target_size = sizeof(bc250_telemetry_data_t);
     if (ftruncate(g_shm_fd, (off_t)target_size) != 0) {

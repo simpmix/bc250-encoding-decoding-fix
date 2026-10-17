@@ -160,12 +160,33 @@ fi
 # 4. VA-API Capabilities & Benchmark
 echo -e "\n${BOLD}[4/5] Testing VA-API Driver & Running Encode Benchmark...${NC}"
 
-# Check DRI render node permissions
-if [ -e "/dev/dri/renderD128" ]; then
-    if [ ! -r "/dev/dri/renderD128" ] || [ ! -w "/dev/dri/renderD128" ]; then
-        echo -e "  ${RED}✗ Current user ($(whoami)) lacks read/write permissions to /dev/dri/renderD128!${NC}"
+# Check DRI render node permissions (auto-detect BC-250 PCI 1002:13fe device node)
+RENDER_DEV="/dev/dri/renderD128"
+if [ -d "/sys/class/drm" ]; then
+    for rnode in /sys/class/drm/renderD*; do
+        if [ -f "$rnode/device/vendor" ] && [ -f "$rnode/device/device" ]; then
+            v=$(cat "$rnode/device/vendor" 2>/dev/null || true)
+            d=$(cat "$rnode/device/device" 2>/dev/null || true)
+            if [ "$v" = "0x1002" ] && [ "$d" = "0x13fe" ]; then
+                devname=$(basename "$rnode")
+                if [ -e "/dev/dri/$devname" ]; then
+                    RENDER_DEV="/dev/dri/$devname"
+                    break
+                fi
+            fi
+        fi
+    done
+fi
+
+if [ -e "$RENDER_DEV" ]; then
+    if [ ! -r "$RENDER_DEV" ] || [ ! -w "$RENDER_DEV" ]; then
+        echo -e "  ${RED}✗ Current user ($(whoami)) lacks read/write permissions to $RENDER_DEV!${NC}"
         echo -e "    Fix: sudo usermod -aG render,video $(whoami) && newgrp render"
+    else
+        echo -e "  ${GREEN}✓ Render device $RENDER_DEV is accessible (read/write OK)${NC}"
     fi
+else
+    echo -e "  ${YELLOW}! Render node $RENDER_DEV not found. Testing generic display.${NC}"
 fi
 
 export LIBVA_DRIVER_NAME=bc250
@@ -190,11 +211,11 @@ fi
 
 # Live Benchmark Test with FFmpeg if installed
 if command -v ffmpeg &> /dev/null; then
-    echo -e "\n${BOLD}==> Running 100-Frame 1080p60 Live Compute Encode Benchmark...${NC}"
+    echo -e "\n${BOLD}==> Running 100-Frame 1080p60 Live H.264 Compute Encode Benchmark...${NC}"
     START_TIME=$(date +%s%N)
     
     if LIBVA_DRIVER_NAME=bc250 LIBVA_DRIVERS_PATH="$LIBVA_DRIVERS_PATH" ffmpeg -v error -f lavfi -i testsrc=duration=1.66:size=1920x1080:rate=60 \
-       -vaapi_device /dev/dri/renderD128 -vf 'format=nv12,hwupload' \
+       -vaapi_device "$RENDER_DEV" -vf 'format=nv12,hwupload' \
        -c:v h264_vaapi -b:v 10M -f null - 2>/tmp/bc250_bench.err; then
         
         END_TIME=$(date +%s%N)
@@ -202,17 +223,40 @@ if command -v ffmpeg &> /dev/null; then
         FPS=$(( 100000 / DURATION_MS ))
         MS_PER_FRAME=$(awk "BEGIN {print $DURATION_MS / 100}")
         
-        echo -e "  ${GREEN}${BOLD}✓ Benchmark Succeeded!${NC}"
+        echo -e "  ${GREEN}${BOLD}✓ H.264 Benchmark Succeeded!${NC}"
         echo -e "  ${BOLD}Latency per frame:${NC} ${GREEN}${MS_PER_FRAME} ms${NC}"
         echo -e "  ${BOLD}Encoder Throughput:${NC} ${GREEN}${FPS} FPS${NC} (Headroom: $(( FPS / 60 ))x real-time)"
     else
-        echo -e "  ${YELLOW}Note: ffmpeg live bench test skipped (no renderD128 permissions or headless).${NC}"
+        echo -e "  ${YELLOW}Note: ffmpeg H.264 live bench test skipped (no render device permissions or headless).${NC}"
         if [ -s /tmp/bc250_bench.err ]; then
             echo -e "  ${RED}FFmpeg error output:${NC}"
             cat /tmp/bc250_bench.err | head -n 10 | sed 's/^/    /'
         fi
     fi
     rm -f /tmp/bc250_bench.err
+
+    echo -e "\n${BOLD}==> Running 100-Frame 1080p60 Live HEVC Compute Encode Benchmark...${NC}"
+    START_TIME_HEVC=$(date +%s%N)
+    if LIBVA_DRIVER_NAME=bc250 LIBVA_DRIVERS_PATH="$LIBVA_DRIVERS_PATH" ffmpeg -v error -f lavfi -i testsrc=duration=1.66:size=1920x1080:rate=60 \
+       -vaapi_device "$RENDER_DEV" -vf 'format=nv12,hwupload' \
+       -c:v hevc_vaapi -b:v 10M -f null - 2>/tmp/bc250_hevc_bench.err; then
+        
+        END_TIME_HEVC=$(date +%s%N)
+        DURATION_MS_HEVC=$(( (END_TIME_HEVC - START_TIME_HEVC) / 1000000 ))
+        FPS_HEVC=$(( 100000 / DURATION_MS_HEVC ))
+        MS_PER_FRAME_HEVC=$(awk "BEGIN {print $DURATION_MS_HEVC / 100}")
+        
+        echo -e "  ${GREEN}${BOLD}✓ HEVC Benchmark Succeeded!${NC}"
+        echo -e "  ${BOLD}Latency per frame:${NC} ${GREEN}${MS_PER_FRAME_HEVC} ms${NC}"
+        echo -e "  ${BOLD}Encoder Throughput:${NC} ${GREEN}${FPS_HEVC} FPS${NC} (Headroom: $(( FPS_HEVC / 60 ))x real-time)"
+    else
+        echo -e "  ${YELLOW}Note: ffmpeg HEVC live bench test skipped (no render device permissions or headless).${NC}"
+        if [ -s /tmp/bc250_hevc_bench.err ]; then
+            echo -e "  ${RED}FFmpeg HEVC error output:${NC}"
+            cat /tmp/bc250_hevc_bench.err | head -n 10 | sed 's/^/    /'
+        fi
+    fi
+    rm -f /tmp/bc250_hevc_bench.err
 fi
 
 # 5. Real-world service environment check

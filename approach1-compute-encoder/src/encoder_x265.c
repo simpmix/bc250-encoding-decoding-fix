@@ -122,6 +122,7 @@ static bool is_steam_caller(void)
 
 typedef struct {
     void *handle;
+    const x265_api *(*api_get)(int bitDepth);
     int (*param_default_preset)(x265_param *param, const char *preset, const char *tune);
     int (*param_apply_profile)(x265_param *param, const char *profile);
     x265_encoder *(*encoder_open)(x265_param *param);
@@ -207,6 +208,7 @@ static void load_x265_ops(void)
         }
     }
     if (p_x265_api_get) {
+        x265_ops.api_get = p_x265_api_get;
         const x265_api *api = p_x265_api_get(0);
         if (api) {
             x265_ops.param_default_preset = api->param_default_preset;
@@ -270,13 +272,26 @@ static void load_x265_ops(void)
     fprintf(stderr, "[bc250-x265] Successfully loaded libx265 via runtime dlopen\n");
 }
 
+bool hevc_x265_supports_10bit(void)
+{
+    pthread_once(&x265_once, load_x265_ops);
+    if (!x265_available) return false;
+    if (x265_ops.api_get) {
+        return x265_ops.api_get(10) != NULL;
+    }
+    return false;
+}
+
 struct hevc_x265 {
     x265_encoder *h;
+    const x265_api *api;
     x265_param param;
     hevc_x265_config_t applied;
     const char *preset;
     int threads;
     int64_t pts;
+    uint8_t *i420_y;
+    size_t i420_y_cap;
     uint8_t *i420_u;
     uint8_t *i420_v;
     size_t i420_cap;
@@ -395,9 +410,32 @@ static void set_rate(x265_param *p, const hevc_x265_config_t *cfg)
 static int open_encoder(hevc_x265_t *x, const hevc_x265_config_t *cfg)
 {
     if (x->h) {
-        x265_ops.encoder_close(x->h);
+        if (x->api && x->api->encoder_close) {
+            x->api->encoder_close(x->h);
+        } else if (x265_ops.encoder_close) {
+            x265_ops.encoder_close(x->h);
+        }
         x->h = NULL;
     }
+
+    x->api = NULL;
+    if (x265_ops.api_get) {
+        x->api = x265_ops.api_get(cfg->ten_bit ? 10 : 8);
+        if (!x->api && cfg->ten_bit) {
+            /* 10-bit requested but not provided by multilib libx265 build */
+            fprintf(stderr, "[bc250-x265] libx265 does not support 10-bit encoding\n");
+            return -1;
+        }
+        if (!x->api) x->api = x265_ops.api_get(0);
+    }
+
+    int (*fn_param_default_preset)(x265_param *, const char *, const char *) =
+        (x->api && x->api->param_default_preset) ? x->api->param_default_preset : x265_ops.param_default_preset;
+    int (*fn_param_apply_profile)(x265_param *, const char *) =
+        (x->api && x->api->param_apply_profile) ? x->api->param_apply_profile : x265_ops.param_apply_profile;
+    x265_encoder *(*fn_encoder_open)(x265_param *) =
+        (x->api && x->api->encoder_open) ? x->api->encoder_open : x265_ops.encoder_open;
+
     x->preset = hevc_x265_preset_for(cfg);
     x->threads = threads_for(cfg);
 
@@ -409,7 +447,7 @@ static int open_encoder(hevc_x265_t *x, const hevc_x265_config_t *cfg)
         const char *env_offline_tune = getenv("BC250_X265_OFFLINE_TUNE");
         if (env_offline_tune && *env_offline_tune) tune = env_offline_tune;
     }
-    if (x265_ops.param_default_preset(&x->param, x->preset, tune) < 0) {
+    if (fn_param_default_preset(&x->param, x->preset, tune) < 0) {
         fprintf(stderr, "[bc250-x265] unknown preset '%s'\n", x->preset);
         return -1;
     }
@@ -445,12 +483,12 @@ static int open_encoder(hevc_x265_t *x, const hevc_x265_config_t *cfg)
     set_rate(&x->param, cfg);
 
     if (cfg->ten_bit) {
-        x265_ops.param_apply_profile(&x->param, "main10");
+        fn_param_apply_profile(&x->param, "main10");
     } else {
-        x265_ops.param_apply_profile(&x->param, "main");
+        fn_param_apply_profile(&x->param, "main");
     }
 
-    x->h = x265_ops.encoder_open(&x->param);
+    x->h = fn_encoder_open(&x->param);
     if (!x->h) {
         fprintf(stderr, "[bc250-x265] x265_encoder_open failed (%ux%u, %s, %s)\n",
                 cfg->width, cfg->height, x->preset, cfg->ten_bit ? "10-bit" : "8-bit");
@@ -490,11 +528,18 @@ int hevc_x265_encode(hevc_x265_t *x, const hevc_x265_config_t *cfg,
 {
     if (!x || !cfg || !y || !uv || !out || out_cap == 0) return -1;
 
+    int (*fn_encoder_reconfig)(x265_encoder *, x265_param *) =
+        (x->api && x->api->encoder_reconfig) ? x->api->encoder_reconfig : x265_ops.encoder_reconfig;
+    void (*fn_picture_init)(x265_param *, x265_picture *) =
+        (x->api && x->api->picture_init) ? x->api->picture_init : x265_ops.picture_init;
+    int (*fn_encoder_encode)(x265_encoder *, x265_nal **, uint32_t *, x265_picture *, x265_picture *) =
+        (x->api && x->api->encoder_encode) ? x->api->encoder_encode : x265_ops.encoder_encode;
+
     if (!x->h || !same_structure(cfg, &x->applied)) {
         if (open_encoder(x, cfg) < 0) return -1;
     } else if (!same_rate(cfg, &x->applied)) {
         set_rate(&x->param, cfg);
-        if (x265_ops.encoder_reconfig(x->h, &x->param) < 0) {
+        if (fn_encoder_reconfig(x->h, &x->param) < 0) {
             if (open_encoder(x, cfg) < 0) return -1;
         }
         x->applied = *cfg;
@@ -534,7 +579,7 @@ int hevc_x265_encode(hevc_x265_t *x, const hevc_x265_config_t *cfg,
             }
         }
     } else {
-        /* De-interleave P010 (16-bit) to 10-bit I420 */
+        /* De-interleave P010 (16-bit MSB-aligned) to 10-bit I420 (LSB-aligned) */
         for (size_t r = 0; r < plane_h; r++) {
             const uint16_t *src_uv_row = (const uint16_t *)(uv + r * (size_t)uv_stride);
             uint16_t *dst_u_row = (uint16_t *)(x->i420_u + r * plane_w * 2);
@@ -547,11 +592,35 @@ int hevc_x265_encode(hevc_x265_t *x, const hevc_x265_config_t *cfg,
     }
 
     x265_picture pic_in;
-    x265_ops.picture_init(&x->param, &pic_in);
+    fn_picture_init(&x->param, &pic_in);
     pic_in.colorSpace = X265_CSP_I420;
     pic_in.pts = x->pts++;
-    pic_in.planes[0] = (void *)y;
-    pic_in.stride[0] = y_stride;
+
+    if (cfg->ten_bit) {
+        /* Unpack P010 MSB-aligned 16-bit luma to 10-bit LSB-aligned */
+        size_t luma_sz = (size_t)cfg->width * cfg->height * 2;
+        if (luma_sz > x->i420_y_cap) {
+            free(x->i420_y);
+            x->i420_y = malloc(luma_sz);
+            if (!x->i420_y) {
+                x->i420_y_cap = 0;
+                return -1;
+            }
+            x->i420_y_cap = luma_sz;
+        }
+        for (size_t r = 0; r < cfg->height; r++) {
+            const uint16_t *src_y_row = (const uint16_t *)(y + r * (size_t)y_stride);
+            uint16_t *dst_y_row = (uint16_t *)(x->i420_y + r * (size_t)cfg->width * 2);
+            for (size_t c = 0; c < cfg->width; c++) {
+                dst_y_row[c] = src_y_row[c] >> 6;
+            }
+        }
+        pic_in.planes[0] = x->i420_y;
+        pic_in.stride[0] = (int)(cfg->width * 2);
+    } else {
+        pic_in.planes[0] = (void *)y;
+        pic_in.stride[0] = y_stride;
+    }
     pic_in.planes[1] = x->i420_u;
     pic_in.stride[1] = (int)(plane_w * bytes_per_sample);
     pic_in.planes[2] = x->i420_v;
@@ -567,12 +636,12 @@ int hevc_x265_encode(hevc_x265_t *x, const hevc_x265_config_t *cfg,
 
     x265_nal *nal = NULL;
     uint32_t pi_nal = 0;
-    int nbytes = x265_ops.encoder_encode(x->h, &nal, &pi_nal, &pic_in, NULL);
+    int nbytes = fn_encoder_encode(x->h, &nal, &pi_nal, &pic_in, NULL);
     if (nbytes < 0) return -1;
 
     size_t total = 0;
     for (uint32_t i = 0; i < pi_nal; i++) {
-        if (total + nal[i].sizeBytes > out_cap) return -1;
+        if (nal[i].sizeBytes > out_cap - total) return -1;
         memcpy(out + total, nal[i].payload, nal[i].sizeBytes);
         total += nal[i].sizeBytes;
     }
@@ -583,7 +652,11 @@ int hevc_x265_encode(hevc_x265_t *x, const hevc_x265_config_t *cfg,
 void hevc_x265_destroy(hevc_x265_t *x)
 {
     if (!x) return;
-    if (x->h && x265_ops.encoder_close) x265_ops.encoder_close(x->h);
+    if (x->h) {
+        if (x->api && x->api->encoder_close) x->api->encoder_close(x->h);
+        else if (x265_ops.encoder_close) x265_ops.encoder_close(x->h);
+    }
+    free(x->i420_y);
     free(x->i420_u);
     free(x->i420_v);
     free(x);

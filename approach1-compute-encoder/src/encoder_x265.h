@@ -51,6 +51,9 @@ int hevc_x265_encode(hevc_x265_t *x, const hevc_x265_config_t *cfg,
 
 void hevc_x265_destroy(hevc_x265_t *x);
 
+/* Checks if runtime libx265 provides 10-bit encoding support. */
+bool hevc_x265_supports_10bit(void);
+
 /* Returns the selected preset string for diagnostics. */
 const char *hevc_x265_preset_for(const hevc_x265_config_t *cfg);
 

@@ -106,28 +106,31 @@ static void run_hevc_test(const char *what, hevc_x265_config_t cfg, int frames, 
 
 static void run_hevc_test10(const char *what, hevc_x265_config_t cfg, int frames)
 {
+    if (!hevc_x265_supports_10bit()) {
+        printf("[test_x265] %-32s skipped (libx265 lacks 10-bit multilib symbols)\n", what);
+        return;
+    }
+
     hevc_x265_t *x = hevc_x265_create();
     assert(x && "hevc_x265_create failed");
 
-    fill_frame10(0);
-    int n0 = hevc_x265_encode(x, &cfg, (const uint8_t *)y_plane10, W * 2,
-                              (const uint8_t *)uv_plane10, W * 2,
-                              true, cfg.rc_mode == RC_CQP ? cfg.qp : 0,
-                              out, sizeof(out));
-    if (n0 < 0) {
-        printf("[test_x265] %-32s skipped (libx265 lacks 10-bit support)\n", what);
-        hevc_x265_destroy(x);
-        return;
-    }
-    assert(n0 > 0 && "10-bit frame must output encoded bitstream");
-
-    for (int f = 1; f < frames; f++) {
+    for (int f = 0; f < frames; f++) {
         fill_frame10(f);
         int n = hevc_x265_encode(x, &cfg, (const uint8_t *)y_plane10, W * 2,
                                  (const uint8_t *)uv_plane10, W * 2,
-                                 false, cfg.rc_mode == RC_CQP ? cfg.qp : 0,
+                                 f == 0, cfg.rc_mode == RC_CQP ? cfg.qp : 0,
                                  out, sizeof(out));
-        assert(n > 0 && "every frame in must output encoded bitstream");
+        assert(n > 0 && "10-bit frame must output encoded bitstream");
+
+        int t[64];
+        int k = hevc_nal_types(out, n, t, 64);
+        assert(k > 0 && "10-bit bitstream must contain valid HEVC NAL units");
+
+        if (f == 0) {
+            int has_headers = has_nal(t, k, 32) && has_nal(t, k, 33) && has_nal(t, k, 34);
+            int has_key = has_nal(t, k, 19) || has_nal(t, k, 20) || has_nal(t, k, 21);
+            assert((has_headers || has_key) && "First 10-bit frame must have parameter sets or IDR NAL");
+        }
     }
 
     hevc_x265_destroy(x);

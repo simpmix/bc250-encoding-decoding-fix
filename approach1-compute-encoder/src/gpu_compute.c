@@ -2083,11 +2083,30 @@ int gpu_compute_create_image(gpu_context_t *ctx, int width, int height, int form
         .format = vk_y,
         .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
     };
-    VK_CHECK(vkCreateImageView(ctx->device, &view_info, NULL, &image->y_view));
+    result = vkCreateImageView(ctx->device, &view_info, NULL, &image->y_view);
+    if (result != VK_SUCCESS) {
+        fprintf(stderr, "[bc250-gpu] Vulkan error %d at %s:%d (y_view)\n", result, __FILE__, __LINE__);
+        gpu_compute_destroy_image(ctx, *image, *memory);
+        image->y_plane = VK_NULL_HANDLE;
+        image->uv_plane = VK_NULL_HANDLE;
+        image->y_view = VK_NULL_HANDLE;
+        memory->memory = VK_NULL_HANDLE;
+        return -1;
+    }
 
     view_info.image = image->uv_plane;
     view_info.format = vk_uv;
-    VK_CHECK(vkCreateImageView(ctx->device, &view_info, NULL, &image->uv_view));
+    result = vkCreateImageView(ctx->device, &view_info, NULL, &image->uv_view);
+    if (result != VK_SUCCESS) {
+        fprintf(stderr, "[bc250-gpu] Vulkan error %d at %s:%d (uv_view)\n", result, __FILE__, __LINE__);
+        gpu_compute_destroy_image(ctx, *image, *memory);
+        image->y_plane = VK_NULL_HANDLE;
+        image->uv_plane = VK_NULL_HANDLE;
+        image->y_view = VK_NULL_HANDLE;
+        image->uv_view = VK_NULL_HANDLE;
+        memory->memory = VK_NULL_HANDLE;
+        return -1;
+    }
 
     return 0;
 }
@@ -2252,11 +2271,30 @@ int gpu_compute_import_dmabuf_image(gpu_context_t *ctx,
         .format = vk_y,
         .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
     };
-    VK_CHECK(vkCreateImageView(ctx->device, &view_info, NULL, &image->y_view));
+    result = vkCreateImageView(ctx->device, &view_info, NULL, &image->y_view);
+    if (result != VK_SUCCESS) {
+        fprintf(stderr, "[bc250-gpu] Vulkan error %d at %s:%d (y_view)\n", result, __FILE__, __LINE__);
+        gpu_compute_destroy_image(ctx, *image, *memory);
+        image->y_plane = VK_NULL_HANDLE;
+        image->uv_plane = VK_NULL_HANDLE;
+        image->y_view = VK_NULL_HANDLE;
+        memory->memory = VK_NULL_HANDLE;
+        return -1;
+    }
 
     view_info.image = image->uv_plane;
     view_info.format = vk_uv;
-    VK_CHECK(vkCreateImageView(ctx->device, &view_info, NULL, &image->uv_view));
+    result = vkCreateImageView(ctx->device, &view_info, NULL, &image->uv_view);
+    if (result != VK_SUCCESS) {
+        fprintf(stderr, "[bc250-gpu] Vulkan error %d at %s:%d (uv_view)\n", result, __FILE__, __LINE__);
+        gpu_compute_destroy_image(ctx, *image, *memory);
+        image->y_plane = VK_NULL_HANDLE;
+        image->uv_plane = VK_NULL_HANDLE;
+        image->y_view = VK_NULL_HANDLE;
+        image->uv_view = VK_NULL_HANDLE;
+        memory->memory = VK_NULL_HANDLE;
+        return -1;
+    }
 
     ctx->any_surface_exported = true;
     return 0;
