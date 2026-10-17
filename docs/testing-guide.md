@@ -35,9 +35,9 @@ This script verifies:
 * VA-API entrypoints and profiles with `vainfo`.
 * Performs a 100-frame hardware encode test.
 
-## 3. Unit Test Suite (11 Test Suites)
+## 3. Unit Test Suite (13 Test Suites)
 
-Run the internal CTest test suite covering bitstream writers, CABAC/CAVLC entropy, motion estimation kernels, dynamic governor, and VA-API entrypoints:
+Run the internal CTest test suite covering bitstream writers, CABAC/CAVLC entropy, motion estimation kernels, dynamic governor, VA-API entrypoints, and runtime CPU backends:
 
 ```bash
 cd approach1-compute-encoder
@@ -46,7 +46,7 @@ cmake --build build -j$(nproc)
 ctest --test-dir build --output-on-failure
 ```
 
-All 11 test suites pass cleanly headless:
+All 13 test suites pass cleanly headless:
 1. `BitstreamTest`
 2. `CavlcUnitTest`
 3. `VaApiDriverTest`
@@ -58,6 +58,8 @@ All 11 test suites pass cleanly headless:
 9. `McUnitTest`
 10. `IntraPredUnitTest`
 11. `HevcTransformUnitTest`
+12. `X264BackendTest` (libx264 dynamic dlopen probing, profiles, rate control, and preset selection)
+13. `X265BackendTest` (libx265 dynamic dlopen probing, single-frame zero latency contract, 10-bit P010, and dynamic bitrate reconfiguration)
 
 ## 4. Official ITU JCT-VC HEVC Conformance Harness
 
@@ -132,3 +134,26 @@ Apply the WiVRn 2-hardware + 1-software stream topology:
 ./tools/wivrn_preset/apply_wivrn_preset.sh
 ```
 Verify that motion-to-photon latency is ~36 ms and host CPU utilization remains under 350%.
+
+## 8. Real-Time Telemetry & Diagnostic Verification
+
+### (a) Shared-Memory Atomic Telemetry Monitoring
+Monitor dynamic governor state transitions, latency EMA, dropped frame counters, and bitrate tracking:
+```bash
+# Snapshot inspection:
+cat /dev/shm/bc250_stats
+
+# Live updating dashboard:
+./tools/bc250_stats --watch
+
+# JSON format for automated monitoring scripts:
+./tools/bc250_stats --json
+```
+
+### (b) 32-Bit Companion Driver Verification (Steam Link)
+Verify that the 32-bit companion driver links cleanly without text relocations:
+```bash
+# Verify ELF32 architecture and missing DT_TEXTREL:
+readelf -h /usr/lib32/dri/bc250_drv_video.so | grep -E 'Class|Machine'
+readelf -d /usr/lib32/dri/bc250_drv_video.so | grep -E 'TEXTREL|NEEDED'
+```

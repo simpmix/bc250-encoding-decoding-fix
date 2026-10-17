@@ -4374,3 +4374,65 @@ Added `video_proc_tonemap.comp` compute shader and integrated `vpp_pipeline_tone
 
 ### 36.6 Fractional-Pel Motion Refinement (Half-Pel ME)
 Extended `cpu_simd_me.c` with half-pel sub-pixel refinement across 4 candidate offsets using bilinear interpolation and AVX2/SSE SIMD SAD calculations, improving compression efficiency and reducing residual bitrate.
+
+
+## 37. H.264 4K Wavefront Decoding Optimization (Ansigo Community Report)
+
+### 37.1 The 4K Bottleneck on Zen 2
+Community tester Ansigo reported severe stutter and dropped frames when streaming or playing 4K60 H.264 content via Moonlight and `mpv`, even though the Zen 2 8-core CPU reported ~35-40% total utilization. At 3840x2160, a video frame contains 32,400 macroblocks across 135 macroblock rows. 
+
+The original decoder architecture in [`decoder_h264.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/decoder_h264.c) throttled the macroblock row cache band to 4 rows (`band_rows = 4`). Across 135 rows, the reconstruction loop hit 34 separate condition variable sleep/wait synchronization barriers per frame. Each barrier forced worker threads to sleep and awaken, incurring massive mutex contention, thread starvation, and context switching overhead.
+
+### 37.2 Full-Height Reconstruction Bands & Memory Optimization
+* **Band Scaling**: In [`decoder_h264.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/decoder_h264.c), scaled `band_rows` from 4 to `d->mb_h` (full frame height), eliminating all 34 intra-frame thread synchronization barriers per 4K frame. CABAC parsing and wavefront reconstruction now proceed continuously in a single unblocked pass.
+* **Persistent Scratch Buffers**: Eliminated per-frame dynamic heap allocation of `uv_buf` (4.15 MB per 4K frame) by persisting scratch memory across picture decode cycles in [`struct h264_decoder`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/h264_dec_internal.h#L126-L128).
+* **Vectorized Chroma Interleaving**: Implemented SSE2 128-bit unpack instructions (`_mm_unpacklo_epi8`, `_mm_unpackhi_epi8`) to interleave U and V planar samples directly into NV12 format at native memory bus bandwidth.
+
+
+## 38. Reconciliation of the 3-Way Fork Ecosystem (simpmix, MTSistemi, Shalasere)
+
+### 38.1 Ecosystem Divergence Audit
+With multiple active forks pursuing divergent optimizations across the AMD BC-250 codebase, an exhaustive audit was conducted across upstream pull requests (PR #57, #58, #59) and the MTSistemi and Shalasere trees to extract essential stability and performance mechanics:
+* **GPU Early Skip Memory Corruption**: In [`hevc_enc_template.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/hevc_enc_template.c#L1820-L1835), `decide_cu()` executed an uninitialized stack copy when applying GPU-informed early skip decisions, overwriting loop context variables and corrupting CU partition trees. Fixed by preserving original CU descriptors and copying only valid skip decision flags.
+* **IDR Self-Referencing Motion Estimation**: In [`gpu_compute.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/gpu_compute.c#L3560-L3580) and [`encoder_h265.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/encoder_h265.c#L130-L145), frame 1 motion estimation improperly referenced the IDR frame itself when the reference slot had not yet completed writeback. Added strict reference valid gates and cleared motion vector buffers across frame boundaries.
+* **Contract Tests**: Added contract test 5b in [`test_va_api.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/tests/test_va_api.c#L352) to guarantee immediate rejection of unsupported external DMA-BUF memory types, ensuring seamless EGL fallback in Sunshine.
+
+
+## 39. Next-Gen Production Mechanics (Release v0.5.3)
+
+### 39.1 Dedicated Asynchronous Compute Engine (ACE) Queue Discovery
+The Cyan Skillfish RDNA 1.5 APU features dedicated hardware compute engines that operate concurrently with the graphics pipeline. In [`gpu_compute.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/gpu_compute.c), added automated discovery of dedicated `VK_QUEUE_COMPUTE_BIT` queues separate from `VK_QUEUE_GRAPHICS_BIT`. Compute encoder dispatches now route to the ACE hardware queue, eliminating scheduling bubbles and shielding 3D game rendering queues from compute preemption stalls.
+
+### 39.2 Double-Buffered Compute Frame Slots
+Implemented double-buffered frame staging slots (`slot_index = frame_num % 2`) in [`gpu_compute.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/gpu_compute.c). Allows frame N+1 compute setup, buffer mapping, and motion estimation to dispatch immediately while frame N completes entropy serialization, boosting live streaming throughput.
+
+### 39.3 Intelligent Predictive Governor v2 (Deadline-Aware Pacing)
+In [`dynamic_governor.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/dynamic_governor.c#L235-L255), overhauled dynamic load balancing with deadline-aware predictive pacing:
+* Scaled governor thresholds proportionally with requested streaming frame rates (e.g. 16.6ms for 60fps, 11.1ms for 90fps, 8.3ms for 120fps).
+* Added acceleration velocity tracking (`latency_velocity = gpu_latency_ms - last_latency_ms`). When GPU latency spikes under 3D game rendering contention, the governor shifts gears proactively before the frame deadline is breached.
+* Enforced an anti-thrashing Tier 1 dwell gate (`min_dwell_frames = 8` live, `0` offline) to eliminate ping-ponging between GPU and CPU offload tiers.
+
+### 39.4 Low-Latency Bitrate & Jitter Smoothing
+In [`rate_control.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/rate_control.c), enhanced rate control with persistent geometry derivation, two-tier burst damping, and instant congestion recovery ([`rc_reset_congestion`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/rate_control.c#L492)) to prevent packet bursts over lossy Wi-Fi links.
+
+### 39.5 Shared-Memory Atomic Telemetry (C11 Seqlock)
+Implemented real-time telemetry in [`telemetry.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/telemetry.c) using POSIX shared memory (`/dev/shm/bc250_stats`) and lockless C11 atomic seqlock synchronization (`atomic_fetch_add` on sequence counter). Developed the companion interactive dashboard [`tools/bc250_stats.c`](file:///D:/Kai/bc250-encoding-decoding-fix/tools/bc250_stats.c) for real-time monitoring of governor tiers, latency EMAs, bitrate tracking, and dropped frame prevention counters.
+
+
+## 40. Release v0.5.4: Cross-Distro Portability, 10-Bit P010 Hardening & Universal dlopen Probing
+
+### 40.1 Eliminating DT_NEEDED SONAME Lock-In (Issue #62)
+Issue #62 (reported by VoidDave) revealed that building the driver on Ubuntu 22.04 LTS hard-coded dynamic linker dependencies (`DT_NEEDED`) on `libx264.so.163` and `libx265.so.199`, causing `dlopen` failures on Bazzite, Fedora 40+, Arch, and modern distributions shipping newer library SONAMEs (`libx264.so.164+` and `libx265.so.209+`/`.215+`).
+* In [`encoder_x264.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/encoder_x264.c) and [`encoder_x265.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/encoder_x265.c), transitioned library linkage entirely to runtime dynamic probing via `dlopen()` and `dlsym()`.
+* Stripped hard link-time dependencies from [`approach1-compute-encoder/CMakeLists.txt`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/CMakeLists.txt). Pre-built release bundles now load out-of-the-box on any Linux distribution without requiring manual symlinks or local compilation.
+* Added 32-bit multiarch library search paths (`/usr/lib32/`, `/usr/lib/i386-linux-gnu/`) for the 32-bit companion driver on Steam Link.
+
+### 40.2 10-Bit P010 Luma Scaling & glibc Heap Corruption Prevention
+* **Sample Alignment**: P010 surfaces store 10-bit samples MSB-aligned in 16-bit words (`val << 6`). Previously, luma was copied raw without shifting, blowing out luminance values by 64x. Added dedicated 10-bit planar buffers (`i420_y`, `i420_u`, `i420_v`) with right-shift unpacking (`sample >> 6`) in [`encoder_x265.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/encoder_x265.c#L673-L685).
+* **Multilib Bit-Depth Negotiation**: On distributions with single-depth 8-bit `libx265.so`, calling `x265_api_get(10)` returns an 8-bit API table where parameter structures mismatch 10-bit layouts, corrupting glibc double-linked lists upon free. Added dynamic inspection of `dlsym(h, "x265_max_bit_depth")` in [`hevc_x265_supports_10bit()`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/encoder_x265.c#L277-L293) to gracefully reject 10-bit configuration on 8-bit only libraries and cleanly fall back to Vulkan compute.
+
+### 40.3 Resource Cleanup & Safety Audits
+* **Vulkan Teardown**: Fixed resource leaks in [`gpu_compute.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/gpu_compute.c) where `VkImage` and `VkDeviceMemory` remained allocated if `vkCreateImageView` failed.
+* **Preset Sentinel**: Terminated `x265_presets` with a `NULL` sentinel in [`encoder_x265.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/encoder_x265.c#L22-L26) to prevent out-of-bounds reads on unrecognized CLI flags.
+* **Multi-User Telemetry**: Added `fchmod(g_shm_fd, 0666)` and automatic fallback to `/tmp/bc250_stats_<uid>` in [`telemetry.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/telemetry.c), and enhanced [`tools/bc250_stats.c`](file:///D:/Kai/bc250-encoding-decoding-fix/tools/bc250_stats.c) with `SUDO_UID` auto-discovery.
+* **Automated Diagnostics**: Upgraded [`tools/bc250_diagnose.sh`](file:///D:/Kai/bc250-encoding-decoding-fix/tools/bc250_diagnose.sh) to auto-detect Cyan Skillfish PCI IDs across all `/sys/class/drm/renderD*` devices and execute dual 100-frame live benchmarks for both H.264 and HEVC.

@@ -12,11 +12,15 @@ The BC-250 is a repurposed PS5 APU (Zen 2 8-core/16-thread CPU, up to 40 unlocke
 This project solves this by delivering:
 1. **GPU Compute Video Encoders & Async Queue Pipelining**: Real-time H.264 and H.265/HEVC encoding executed across the APU's 40 Compute Units using custom Vulkan compute shaders with dedicated Asynchronous Compute Engine (ACE) hardware queues and double-buffered slot isolation.
 2. **Intelligent Predictive Governor v2 (Deadline-Aware Pacing)**: Dynamic gear-shifting between full GPU diamond search, fast downhill search, and AVX2 CPU SIMD offloading with real-time frame deadline budgets (16.6ms for 60fps, 8.3ms for 120fps) and 3D contention velocity tracking to eliminate dropped frames.
-3. **Low-Latency Bitrate & Jitter Smoothing**: Adaptive rate control enhancements handling sudden network bandwidth drops without macroblocking or packet spikes.
-4. **Real-Time Observability & Telemetry**: Live stats reporting / shared-memory telemetry (`/dev/shm/bc250_stats`) for monitoring encode latency, governor tiers, and dropped frame prevention with the `bc250_stats` monitor tool.
-5. **Bit-Exact VA-API Video Decoders (`VAEntrypointVLD`)**: Threaded H.264 and HEVC decoding running on the Zen 2 CPU, verified bit-exact against reference decoders across all 302 conformance tests.
-6. **Low-Latency Game & VR Streaming**: Pre-tuned presets and passive thread policies for Sunshine / Moonlight (1080p60/1440p) and WiVRn wireless VR streaming (~36ms motion-to-photon latency, ~190 Mbps throughput).
-7. **Hardware Audio Clock Fix**: DKMS kernel module repairing the missing DisplayPort/HDMI audio clock.
+3. **Universal Cross-Distribution Portability**: Zero hard-coded `DT_NEEDED` dependencies on specific library SONAMEs; runtime `dlopen()` probing seamlessly dynamically loads `libx264` (`.so`, `.so.164`, `.so.163`, etc.) and `libx265` (`.so`, `.so.215`, `.so.209`, `.so.199`, etc.) across Bazzite, SteamOS, Fedora, Arch Linux, and Ubuntu without manual symlinking or local recompilation.
+4. **32-Bit Companion Driver for Steam Link**: Native 32-bit driver build (`bc250-driver-linux-i386.tar.gz`) for Steam Remote Play / Steam Link companion runtimes, resolving 32-bit multiarch library search paths (`/usr/lib32/`, `/usr/lib/i386-linux-gnu/`).
+5. **10-Bit P010 HDR Encoding**: Main 10 profile with MSB-aligned `>> 6` sample unpacking and runtime bit-depth capability validation (`x265_max_bit_depth`).
+6. **4K Wavefront H.264 Decoding**: Wavefront processing scaled to full picture height with persistent scratch allocation and SSE2 vectorization, eliminating condition variable synchronization barriers.
+7. **Low-Latency Bitrate & Jitter Smoothing**: Adaptive rate control enhancements handling sudden network bandwidth drops without macroblocking or packet spikes.
+8. **Real-Time Observability & Atomic Telemetry**: Multi-user shared-memory telemetry (`/dev/shm/bc250_stats`, `/tmp/bc250_stats_<uid>`) with lockless C11 seqlock synchronization and interactive terminal stats viewer `bc250_stats`.
+9. **Bit-Exact VA-API Video Decoders (`VAEntrypointVLD`)**: Threaded H.264 and HEVC decoding running on the Zen 2 CPU, verified bit-exact against reference decoders across all 302 conformance tests.
+10. **Low-Latency Game & VR Streaming**: Pre-tuned presets and passive thread policies for Sunshine / Moonlight (1080p60/1440p) and WiVRn wireless VR streaming (~36ms motion-to-photon latency, ~190 Mbps throughput).
+11. **Hardware Audio Clock Fix**: DKMS kernel module repairing the missing DisplayPort/HDMI audio clock.
 
 ## Performance & Conformance Highlights
 
@@ -93,8 +97,17 @@ We provide native package manifests with automatic Cyan Skillfish PCI (`0x1002:0
 
 Download the latest release bundles directly from [GitHub Releases](https://github.com/simpmix/bc250-encoding-decoding-fix/releases/latest):
 ```bash
+# 64-bit main driver (Desktop, Sunshine, Moonlight, Kodi, OBS, Chromium):
 tar -xzf bc250-driver-linux-x86_64.tar.gz
+cd bc250-driver
 sudo ./install.sh
+cd ..
+
+# 32-bit companion driver (Required for Steam Link / Steam Remote Play):
+tar -xzf bc250-driver-linux-i386.tar.gz
+sudo install -Dm755 bc250-driver-i386/bc250_drv_video.so /usr/lib32/dri/bc250_drv_video.so
+# On Debian/Ubuntu multiarch:
+sudo install -Dm755 bc250-driver-i386/bc250_drv_video.so /usr/lib/i386-linux-gnu/dri/bc250_drv_video.so
 ```
 
 ## Streaming Presets & Tuning
@@ -200,4 +213,4 @@ sudo cmake --install build
 * **Special Thanks**:
   * **Mattia Tadini (@MTSistemi)** for authoring the complete bit-exact H.264 & HEVC decoders (`VAEntrypointVLD`), multi-slice HEVC, 16-bit Vulkan features, and distro packaging.
   * **Shalasere** for SPS crop research, Table 8-10 chroma QP mapping, and CABAC residual optimizations.
-  * **Community Testers**: `oblique99`, `Cosmos`, `land_and_air`
+  * **Community Testers**: `oblique99`, `Cosmos`, `land_and_air`, `VoidDave` (Issue #62 Bazzite portability testing), `Ansigo` (4K60 streaming & decode wavefront optimization testing).

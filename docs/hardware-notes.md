@@ -25,4 +25,10 @@ Exhaustive reverse-engineering across the community and firmware audit of the AM
 ### 2. DisplayPort / HDMI Audio Clock Divisor
 - The display controller (`dc`) calculates an incorrect audio sample clock divisor for 44.1/48 kHz audio. The included `bc250_audio_fix` DKMS module writes the proper clock ratios directly to APU DCCG registers (`0x05E0`, `0x05E4`, `0x05E8`).
 
-<!-- bc250-encoding-decoding-fix v0.4.3 -->
+### 3. Asynchronous Compute Engine (ACE) Queues
+- The Cyan Skillfish GPU die features independent hardware compute queues exposed via Vulkan `VK_QUEUE_COMPUTE_BIT`. The driver discovers and binds dedicated compute queue families directly, enabling compute shader dispatch to run concurrently on available CUs without blocking on the primary 3D graphics queue (`VK_QUEUE_GRAPHICS_BIT`) used by Proton and native games.
+
+### 4. Zen 2 CPU SIMD & Vector Architecture
+- The 8-core / 16-thread Zen 2 CPU delivers dual 256-bit AVX2 execution units per core. The driver leverages packed SSE2/AVX2 intrinsics (`_mm256_sad_epu8`, `_mm_unpacklo_epi8`, `_mm_unpackhi_epi8`) for real-time motion estimation search offloading, 10-bit P010 luma/chroma unpacking, and zero-allocation wavefront reconstruction.
+
+<!-- bc250-encoding-decoding-fix v0.5.4 -->

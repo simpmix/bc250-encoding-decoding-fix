@@ -573,3 +573,71 @@ The related question - can the game be stopped from taking every CU - has an ans
 Short version: `VK_AMD_shader_core_policy` is the extension that would do this from inside a Vulkan app and **RADV does not expose it**. Mesa's per-process `AMD_CU_MASK` (Mesa ≥ 22.0) does work, but it is a mask *within* a shader array applied to *every* array, so "2 CUs" means 2 per array, and Mesa rejects a mask that would leave its hardware late-allocation constraints unsatisfied. `BC250_CU_REPORT=1` prints the topology and the two masks to use.
 
 Be clear-eyed about what a fence buys: it stops the game from dispatching on those CUs, which shortens how long the encoder's submission waits its turn. It does not create GPU time, and it does not touch the CPU-side cost, which DEVLOG §24.6 measures going from 7.1 ms to 24.0 ms under the same load with no code change.
+
+## 21. Bazzite / Fedora / Immutable OS "libx264.so.163 / libx265.so.199 not found" (Issue #62)
+
+### Symptoms
+When running `./tools/bc250_diagnose.sh` or launching Sunshine on modern immutable distributions (such as Bazzite 40/44, Fedora Silverblue/Kinoite, Arch Linux, or Debian 13), `libva` errors out with:
+```text
+libva error: dlopen of /usr/local/lib64/dri/bc250_drv_video.so failed: libx264.so.163: cannot open shared object file: No such file or directory
+```
+or `libx265.so.199: cannot open shared object file`.
+
+### Cause
+In pre-v0.5.4 releases, binaries were built on an Ubuntu 22.04 LTS host that hard-coded link-time ELF dependencies (`DT_NEEDED`) on Ubuntu's exact library SONAMEs (`libx264.so.163` and `libx265.so.199`). Modern distributions package newer versions (`libx264.so.164+` and `libx265.so.209+` or `libx265.so.215+`), which caused dynamic link failures upon driver loading.
+
+### Solution
+1. **Update to Driver Release v0.5.4+ (Permanent Fix)**:
+   Release v0.5.4 converts both `encoder_x264.c` and `encoder_x265.c` to use dynamic runtime symbol probing via `dlopen()` and `dlsym()`, completely eliminating compile-time `DT_NEEDED` dependencies on specific library versions. The driver now automatically probes and resolves whichever version of `libx264` or `libx265` is installed on your distribution.
+   Download the latest release from [GitHub Releases](https://github.com/simpmix/bc250-encoding-decoding-fix/releases/latest) and run `./install.sh`.
+
+2. **Immediate Symlink Workaround (for legacy builds)**:
+   If running an older driver build without updating:
+   ```bash
+   sudo ln -sf /usr/lib64/libx264.so.* /usr/local/lib64/libx264.so.163
+   sudo ln -sf /usr/lib64/libx265.so.* /usr/local/lib64/libx265.so.199
+   sudo ldconfig
+   ```
+
+## 22. 10-Bit P010 HDR Encoding & Single-Depth vs. Multilib x265 Packages
+
+### Symptoms
+Enabling 10-bit encoding (`VAProfileHEVCMain10` with P010 surfaces) causes a crash with `corrupted double-linked list` or aborts during encoder initialization on distributions with 8-bit-only `libx265.so`.
+
+### Cause
+Distributions package `libx265` in two distinct formats:
+* **Multilib builds** (Debian, Ubuntu, Fedora) which compile 8-bit, 10-bit, and 12-bit depth libraries and route requests via `x265_api_get(10)`.
+* **Single-depth builds** (8-bit only). On these systems, `x265_api_get(10)` returns the 8-bit API table where parameter structure sizes and planar pointer offsets do not match 16-bit P010 structures.
+
+### Solution
+Release v0.5.4 inspects the exported `x265_max_bit_depth` symbol at runtime via `dlsym`. If the host library does not support 10-bit encoding (`*x265_ops.max_bit_depth < 10`), the driver gracefully rejects the 10-bit request and falls back to the Vulkan GPU compute backend, preventing memory corruption.
+To verify 10-bit support on your host system:
+```bash
+readelf -s /usr/lib64/libx265.so* | grep x265_max_bit_depth
+```
+
+## 23. 4K H.264 Playback & Wavefront Decoding Stuttering
+
+### Symptoms
+Playing high-bitrate 4K (3840x2160) H.264 videos in `mpv` or streaming at 4K60 experiences severe micro-stuttering and CPU thread starvation despite low overall CPU percentage.
+
+### Cause
+At 4K resolution, a picture contains 32,400 macroblocks across 135 macroblock rows. Older decoder implementations throttled wavefront reconstruction cache bands to 4 rows (`band_rows = 4`), requiring 34 separate condition variable sleep/wait barriers per 4K frame, causing severe thread mutex contention. Additionally, dynamic heap allocation of chroma buffers on every frame added memory allocator pressure.
+
+### Solution
+Update to release v0.5.4+. The H.264 decoder now scales `band_rows` to the full frame height (`d->mb_h`), eliminating 34 condition variable barriers per 4K frame. Persistent scratch buffers are maintained in `struct h264_decoder`, and chroma interleaving uses SSE2 128-bit unpack instructions (`_mm_unpacklo_epi8`, `_mm_unpackhi_epi8`) for zero-allocation reconstruction.
+
+## 24. Shared-Memory Telemetry Permission Denied (`/dev/shm/bc250_stats`)
+
+### Symptoms
+Running `cat /dev/shm/bc250_stats` or `./tools/bc250_stats` as a non-root user outputs `Permission denied` when Sunshine or Gamescope was started under a different UID or as root.
+
+### Cause
+In earlier versions, `/dev/shm/bc250_stats` was created with default umask permissions (`0644` or `0600`), preventing access across user accounts.
+
+### Solution
+The driver now explicitly sets `fchmod(g_shm_fd, 0666)` upon creating shared memory segments and includes an automatic per-UID fallback (`/tmp/bc250_stats_<uid>`).
+The `bc250_stats` monitor tool automatically checks the current user's UID, `SUDO_UID`, and global fallback paths:
+```bash
+./tools/bc250_stats --watch
+```
