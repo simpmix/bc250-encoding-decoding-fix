@@ -122,6 +122,7 @@ static bool is_steam_caller(void)
 
 typedef struct {
     void *handle;
+    const int *max_bit_depth;
     const x265_api *(*api_get)(int bitDepth);
     int (*param_default_preset)(x265_param *param, const char *preset, const char *tune);
     int (*param_apply_profile)(x265_param *param, const char *profile);
@@ -267,18 +268,24 @@ static void load_x265_ops(void)
         return;
     }
 
+    x265_ops.max_bit_depth = (const int *)dlsym(h, "x265_max_bit_depth");
     x265_ops.handle = h;
     x265_available = true;
-    fprintf(stderr, "[bc250-x265] Successfully loaded libx265 via runtime dlopen\n");
+    fprintf(stderr, "[bc250-x265] Successfully loaded libx265 via runtime dlopen (max bit depth: %d)\n",
+            x265_ops.max_bit_depth ? *x265_ops.max_bit_depth : 0);
 }
 
 bool hevc_x265_supports_10bit(void)
 {
     pthread_once(&x265_once, load_x265_ops);
     if (!x265_available) return false;
+    if (!x265_ops.max_bit_depth || *x265_ops.max_bit_depth < 10) return false;
     if (x265_ops.api_get) {
         const x265_api *api = x265_ops.api_get(10);
         if (!api) return false;
+#if defined(X265_MAJOR_VERSION)
+        if (api->api_major_version != X265_MAJOR_VERSION) return false;
+#endif
         if (api->sizeof_param != sizeof(x265_param) || api->sizeof_picture != sizeof(x265_picture)) return false;
         return true;
     }
@@ -412,6 +419,12 @@ static void set_rate(x265_param *p, const hevc_x265_config_t *cfg)
 
 static int open_encoder(hevc_x265_t *x, const hevc_x265_config_t *cfg)
 {
+    if (cfg->ten_bit && !hevc_x265_supports_10bit()) {
+        fprintf(stderr, "[bc250-x265] libx265 does not support compatible 10-bit encoding (max bit depth: %d)\n",
+                x265_ops.max_bit_depth ? *x265_ops.max_bit_depth : 0);
+        return -1;
+    }
+
     if (x->h) {
         if (x->api && x->api->encoder_close) {
             x->api->encoder_close(x->h);
@@ -682,5 +695,6 @@ int hevc_x265_encode(hevc_x265_t *x, const hevc_x265_config_t *cfg,
     return -1;
 }
 void hevc_x265_destroy(hevc_x265_t *x) { (void)x; }
+bool hevc_x265_supports_10bit(void) { return false; }
 
 #endif /* BC250_HAVE_X265 */
