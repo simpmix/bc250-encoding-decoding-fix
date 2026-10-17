@@ -421,19 +421,19 @@ static int open_encoder(hevc_x265_t *x, const hevc_x265_config_t *cfg)
     x->param.internalBitDepth = cfg->ten_bit ? 10 : 8;
     x->param.fpsNum = cfg->fps ? cfg->fps : 30;
     x->param.fpsDenom = 1;
-    x->param.frameNumThreads = cfg->live ? 1 : x->threads;
+    x->param.frameNumThreads = 1; /* Frame-synchronous zero-latency contract: no frame-level queuing */
+    x->param.bFrameAdaptive = 0;
+    x->param.rc.cuTree = 0;
+    x->param.lookaheadDepth = 0;
     x->param.keyframeMax = cfg->gop ? (int)cfg->gop : (int)x->param.fpsNum;
     x->param.bRepeatHeaders = 1;
     x->param.bAnnexB = 1;
 
     if (cfg->live) {
-        x->param.frameNumThreads = 1;
-        x->param.bFrameAdaptive = 0;
         x->param.bframes = 0;
-        x->param.rc.cuTree = 0;
-        x->param.lookaheadDepth = 0;
         x->param.bEnableWavefront = is_steam_caller() ? 0 : 1;
     } else {
+        x->param.bEnableWavefront = 1;
         const char *env_b = getenv("BC250_BFRAMES");
         if (env_b && *env_b) {
             x->param.bframes = atoi(env_b);
