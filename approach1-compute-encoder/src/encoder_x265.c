@@ -277,7 +277,10 @@ bool hevc_x265_supports_10bit(void)
     pthread_once(&x265_once, load_x265_ops);
     if (!x265_available) return false;
     if (x265_ops.api_get) {
-        return x265_ops.api_get(10) != NULL;
+        const x265_api *api = x265_ops.api_get(10);
+        if (!api) return false;
+        if (api->sizeof_param != sizeof(x265_param) || api->sizeof_picture != sizeof(x265_picture)) return false;
+        return true;
     }
     return false;
 }
@@ -420,13 +423,16 @@ static int open_encoder(hevc_x265_t *x, const hevc_x265_config_t *cfg)
 
     x->api = NULL;
     if (x265_ops.api_get) {
-        x->api = x265_ops.api_get(cfg->ten_bit ? 10 : 8);
-        if (!x->api && cfg->ten_bit) {
-            /* 10-bit requested but not provided by multilib libx265 build */
-            fprintf(stderr, "[bc250-x265] libx265 does not support 10-bit encoding\n");
-            return -1;
+        if (cfg->ten_bit) {
+            x->api = x265_ops.api_get(10);
+            if (!x->api || x->api->sizeof_param != sizeof(x265_param) || x->api->sizeof_picture != sizeof(x265_picture)) {
+                fprintf(stderr, "[bc250-x265] libx265 does not support compatible 10-bit encoding\n");
+                x->api = NULL;
+                return -1;
+            }
+        } else {
+            x->api = x265_ops.api_get(0);
         }
-        if (!x->api) x->api = x265_ops.api_get(0);
     }
 
     int (*fn_param_default_preset)(x265_param *, const char *, const char *) =
@@ -595,6 +601,7 @@ int hevc_x265_encode(hevc_x265_t *x, const hevc_x265_config_t *cfg,
     fn_picture_init(&x->param, &pic_in);
     pic_in.colorSpace = X265_CSP_I420;
     pic_in.pts = x->pts++;
+    pic_in.bitDepth = cfg->ten_bit ? 10 : 8;
 
     if (cfg->ten_bit) {
         /* Unpack P010 MSB-aligned 16-bit luma to 10-bit LSB-aligned */

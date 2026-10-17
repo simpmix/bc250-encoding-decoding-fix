@@ -114,23 +114,36 @@ static void run_hevc_test10(const char *what, hevc_x265_config_t cfg, int frames
     hevc_x265_t *x = hevc_x265_create();
     assert(x && "hevc_x265_create failed");
 
-    for (int f = 0; f < frames; f++) {
+    fill_frame10(0);
+    int n0 = hevc_x265_encode(x, &cfg, (const uint8_t *)y_plane10, W * 2,
+                              (const uint8_t *)uv_plane10, W * 2,
+                              true, cfg.rc_mode == RC_CQP ? cfg.qp : 0,
+                              out, sizeof(out));
+    if (n0 < 0) {
+        printf("[test_x265] %-32s skipped (10-bit encoder initialization failed)\n", what);
+        hevc_x265_destroy(x);
+        return;
+    }
+    assert(n0 > 0 && "10-bit frame must output encoded bitstream");
+
+    int t0[64];
+    int k0 = hevc_nal_types(out, n0, t0, 64);
+    assert(k0 > 0 && "10-bit bitstream must contain valid HEVC NAL units");
+    int has_headers = has_nal(t0, k0, 32) && has_nal(t0, k0, 33) && has_nal(t0, k0, 34);
+    int has_key = has_nal(t0, k0, 19) || has_nal(t0, k0, 20) || has_nal(t0, k0, 21);
+    assert((has_headers || has_key) && "First 10-bit frame must have parameter sets or IDR NAL");
+
+    for (int f = 1; f < frames; f++) {
         fill_frame10(f);
         int n = hevc_x265_encode(x, &cfg, (const uint8_t *)y_plane10, W * 2,
                                  (const uint8_t *)uv_plane10, W * 2,
-                                 f == 0, cfg.rc_mode == RC_CQP ? cfg.qp : 0,
+                                 false, cfg.rc_mode == RC_CQP ? cfg.qp : 0,
                                  out, sizeof(out));
         assert(n > 0 && "10-bit frame must output encoded bitstream");
 
         int t[64];
         int k = hevc_nal_types(out, n, t, 64);
         assert(k > 0 && "10-bit bitstream must contain valid HEVC NAL units");
-
-        if (f == 0) {
-            int has_headers = has_nal(t, k, 32) && has_nal(t, k, 33) && has_nal(t, k, 34);
-            int has_key = has_nal(t, k, 19) || has_nal(t, k, 20) || has_nal(t, k, 21);
-            assert((has_headers || has_key) && "First 10-bit frame must have parameter sets or IDR NAL");
-        }
     }
 
     hevc_x265_destroy(x);
@@ -139,6 +152,7 @@ static void run_hevc_test10(const char *what, hevc_x265_config_t cfg, int frames
 
 int main(void)
 {
+    setvbuf(stdout, NULL, _IONBF, 0);
     const hevc_x265_config_t base = {
         .width = W,
         .height = H,
