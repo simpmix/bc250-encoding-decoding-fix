@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: bc250-vaapi
-Source: https://github.com/MTSistemi/bc250-vaapi
+Source: https://github.com/simpmix/bc250-encoding-decoding-fix
 
 Files: *
 Copyright: 2025-2026 simpmix and contributors

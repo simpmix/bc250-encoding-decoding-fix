@@ -53,8 +53,8 @@ CHECKS='
 arch() {
     echo ">>> Arch / CachyOS / SteamOS"
     inside docker.io/library/archlinux:latest "
-        pacman -Sy --noconfirm --needed libva libdrm vulkan-icd-loader
-        pacman -U --noconfirm /pkg/bc250-vaapi-*.pkg.tar.zst
+        pacman -Sy --noconfirm --needed libva libdrm vulkan-icd-loader x264 x265
+        pacman -U --noconfirm /pkg/bc250-vaapi-*.pkg.tar.*
         $CHECKS
     "
 }
@@ -75,7 +75,7 @@ debian() {
     inside docker.io/library/debian:trixie "
         apt-get update
         DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            /pkg/bc250-vaapi_26.09.2_amd64.deb
+            /pkg/bc250-vaapi*.deb
         $CHECKS
     "
 }

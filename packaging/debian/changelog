@@ -1,3 +1,13 @@
+bc250-vaapi (0.5.4-2) unstable; urgency=medium
+
+  * Fix packaging/build.sh unmet build dependencies for Debian (closes: #63).
+  * Add libx264-dev and libx265-dev build prerequisites to Debian container.
+  * Synchronize packaging versions across Arch PKGBUILD and Fedora spec.
+  * Install real-time telemetry tool bc250_stats across distribution packages.
+  * Modernize packaging/verify.sh with glob patterns for generated Debian packages.
+
+ -- BC-250 Project Contributors <support@bc250.org>  Mon, 02 Nov 2026 21:25:00 +0530
+
 bc250-vaapi (0.5.4-1) unstable; urgency=medium
 
   * Runtime dynamic dlopen probing for libx264 and libx265 to eliminate DT_NEEDED SONAME lock-in.

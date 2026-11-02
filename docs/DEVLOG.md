@@ -4436,3 +4436,22 @@ Issue #62 (reported by VoidDave) revealed that building the driver on Ubuntu 22.
 * **Preset Sentinel**: Terminated `x265_presets` with a `NULL` sentinel in [`encoder_x265.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/encoder_x265.c#L22-L26) to prevent out-of-bounds reads on unrecognized CLI flags.
 * **Multi-User Telemetry**: Added `fchmod(g_shm_fd, 0666)` and automatic fallback to `/tmp/bc250_stats_<uid>` in [`telemetry.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/telemetry.c), and enhanced [`tools/bc250_stats.c`](file:///D:/Kai/bc250-encoding-decoding-fix/tools/bc250_stats.c) with `SUDO_UID` auto-discovery.
 * **Automated Diagnostics**: Upgraded [`tools/bc250_diagnose.sh`](file:///D:/Kai/bc250-encoding-decoding-fix/tools/bc250_diagnose.sh) to auto-detect Cyan Skillfish PCI IDs across all `/sys/class/drm/renderD*` devices and execute dual 100-frame live benchmarks for both H.264 and HEVC.
+
+## 41. Distribution Packaging Hardening & CI Automation (Issue #63)
+
+### 41.1 Debian Build Dependencies Resolution (Issue #63)
+Issue #63 reported by Francesco Gugliuzza (`fgugliuzza`) identified a build failure in `packaging/build.sh debian` where `dpkg-checkbuilddeps` aborted with:
+`unmet build dependencies: libx264-dev libx265-dev`
+* Root cause: `debian/control` had added `libx264-dev` and `libx265-dev` as build dependencies in commits `4ac7698` and `344cd4e`, but the container bootstrap in `packaging/build.sh` had not included these packages in its `apt-get install` command.
+* In [`packaging/build.sh`](file:///D:/Kai/bc250-encoding-decoding-fix/packaging/build.sh), added `libx264-dev libx265-dev` to the Debian build environment setup.
+* Added pre-build directory cleanup (`rm -rf debian approach1-compute-encoder/build approach1-compute-encoder/redhat-linux-build`) before copying `packaging/debian` to ensure stale host build artifacts never pollute the containerized package tree.
+
+### 41.2 Arch & Fedora Packaging Synchronization
+* **Arch Linux (`packaging/arch/PKGBUILD`)**: Added `x264 x265 pkgconf` to the package dependencies and container bootstrap. Synchronized version to `0.5.4` and enabled dynamic version discovery in `packaging/build.sh` so `makepkg` reliably locates the working tree tarball.
+* **Fedora (`packaging/fedora/bc250-vaapi.spec`)**: Enabled RPM Fusion Free repositories in the Fedora build container to satisfy `pkgconfig(x264)` and `pkgconfig(x265)`. Added automated conditional probing (`pkg-config --exists`) to pass `--without x264 --without x265` as a fallback if RPM Fusion is unavailable. Updated `Epoch: 1` and `Version: 0.5.4` for clean package upgrade ordering.
+* **Telemetry Tool Distribution**: Added automated build and packaging of the real-time telemetry monitor [`tools/bc250_stats.c`](file:///D:/Kai/bc250-encoding-decoding-fix/tools/bc250_stats.c) into `/usr/bin/bc250_stats` across Debian rules, Arch PKGBUILD, and Fedora spec files.
+
+### 41.3 Verification Suite Modernization & CI Integration
+* In [`packaging/verify.sh`](file:///D:/Kai/bc250-encoding-decoding-fix/packaging/verify.sh), replaced hardcoded legacy package paths with flexible glob patterns (`/pkg/bc250-vaapi*.deb`), and added runtime codec libraries (`x264 x265`) to Arch verification containers.
+* Integrated automated Debian package building and verification (`packaging/build.sh debian` and `packaging/verify.sh debian`) directly into [`.github/workflows/build.yml`](file:///D:/Kai/bc250-encoding-decoding-fix/.github/workflows/build.yml) via the `package-debian` job.
+* Debian `.deb` packages are now validated with `ldd -r` and uploaded as workflow artifacts on every push, ensuring packaging regressions are caught immediately in CI.

@@ -9,9 +9,9 @@ run on the board.
 | Bazzite, Silverblue, Kinoite, Fedora | `fedora/bc250-vaapi.spec` | `/usr/lib64/dri` |
 | Debian, Ubuntu, SkillFishOS | `debian/` | `/usr/lib/<triplet>/dri` |
 
-All three install the same three things: the driver, the nine compiled
-shaders under `/usr/share/bc250/shaders`, and one systemd user
-environment generator.
+All three install the driver, the compiled shaders under
+`/usr/share/bc250/shaders`, the `bc250_stats` real-time telemetry monitor,
+and one systemd user environment generator.
 
 ## Installing
 
@@ -77,7 +77,7 @@ packages land in `packaging/out/`.
 
 This installs each package in a clean container of its distribution and
 checks that the driver is where that distribution looks for it, that
-every symbol resolves, that all nine shaders arrived, and that the
+every symbol resolves, that all compiled shaders arrived, and that the
 generator correctly turns nothing on.
 
 ⚠️ **`ldd -r` is the reason this script exists.** A library with an

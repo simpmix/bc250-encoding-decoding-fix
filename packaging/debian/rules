@@ -29,8 +29,7 @@ override_dh_auto_configure:
 # ⚠️ The tests are deliberately not built: on some versions they are missing
 # includes and fail the whole build, while the library itself is well.
 override_dh_auto_build:
-	cmake --build $(BLD) -j$(shell nproc) \
-	    --target bc250_drv_video compile_shaders
+	cmake --build $(BLD) -j$(shell nproc)
 
 override_dh_auto_test:
 
@@ -39,6 +38,9 @@ override_dh_auto_install:
 	    $(PKG)/usr/lib/$(DEB_HOST_MULTIARCH)/dri/bc250_drv_video.so
 	install -d $(PKG)/usr/share/bc250/shaders
 	install -m 0644 $(BLD)/*.spv $(PKG)/usr/share/bc250/shaders/
+	if [ -f $(BLD)/bc250_stats ]; then \
+	    install -D -m 0755 $(BLD)/bc250_stats $(PKG)/usr/bin/bc250_stats; \
+	fi
 	install -D -m 0755 packaging/common/60-bc250-vaapi \
 	    $(PKG)/usr/lib/systemd/user-environment-generators/60-bc250-vaapi
 

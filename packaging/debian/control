@@ -1,7 +1,7 @@
 Source: bc250-vaapi
 Section: video
 Priority: optional
-Maintainer: SkillFishOS <info@mtsistemi.it>
+Maintainer: BC-250 Project Contributors <support@bc250.org>
 Build-Depends: debhelper-compat (= 13),
                cmake,
                pkgconf,
@@ -12,7 +12,7 @@ Build-Depends: debhelper-compat (= 13),
                libx265-dev,
                glslang-tools
 Standards-Version: 4.7.0
-Homepage: https://github.com/MTSistemi/bc250-vaapi
+Homepage: https://github.com/simpmix/bc250-encoding-decoding-fix
 Rules-Requires-Root: no
 
 Package: bc250-vaapi

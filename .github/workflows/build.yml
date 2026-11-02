@@ -332,3 +332,31 @@ jobs:
         gh release upload "${{ github.ref_name }}" bc250-driver-linux-i386.tar.gz --clobber
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  package-debian:
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set permissions
+      run: chmod +x packaging/build.sh packaging/verify.sh packaging/common/60-bc250-vaapi
+
+    - name: Build Debian Package (.deb)
+      run: ./packaging/build.sh debian
+
+    - name: Verify Debian Package
+      run: ./packaging/verify.sh debian
+
+    - name: Upload Debian Package (.deb)
+      uses: actions/upload-artifact@v4
+      with:
+        name: bc250-vaapi-debian
+        path: packaging/out/*.deb
+
+    - name: Publish Debian Package to Release (Tags only)
+      if: startsWith(github.ref, 'refs/tags/v')
+      run: |
+        gh release upload "${{ github.ref_name }}" packaging/out/*.deb --clobber
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

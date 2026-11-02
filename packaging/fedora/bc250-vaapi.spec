@@ -15,12 +15,13 @@
 %global debug_package %{nil}
 
 Name:           bc250-vaapi
-Version:        26.09.2
+Epoch:          1
+Version:        0.5.4
 Release:        1%{?dist}
 Summary:        VA-API video encoding and decoding for the AMD BC-250
 
 License:        GPL-3.0-only
-URL:            https://github.com/MTSistemi/bc250-vaapi
+URL:            https://github.com/simpmix/bc250-encoding-decoding-fix
 Source0:        %{url}/archive/refs/heads/%{_commit}.tar.gz#/%{name}-%{version}.tar.gz
 
 ExclusiveArch:  x86_64
@@ -89,7 +90,7 @@ cd approach1-compute-encoder
     -DLIBVA_DRIVERS_PATH=%{_libdir}/dri \
     -DBC250_WITH_X264=%{?with_x264:ON}%{!?with_x264:OFF} \
     -DBUILD_TESTS=OFF
-%cmake_build --target bc250_drv_video compile_shaders
+%cmake_build
 
 %install
 cd approach1-compute-encoder
@@ -100,6 +101,11 @@ install -d %{buildroot}%{_datadir}/bc250/shaders
 install -pm 0644 %{_vpath_builddir}/*.spv \
     %{buildroot}%{_datadir}/bc250/shaders/
 
+if [ -f %{_vpath_builddir}/bc250_stats ]; then
+    install -Dpm 0755 %{_vpath_builddir}/bc250_stats \
+        %{buildroot}%{_bindir}/bc250_stats
+fi
+
 cd ..
 install -Dpm 0755 packaging/common/60-bc250-vaapi \
     %{buildroot}%{_prefix}/lib/systemd/user-environment-generators/60-bc250-vaapi
@@ -108,12 +114,17 @@ install -Dpm 0755 packaging/common/60-bc250-vaapi \
 %license LICENSE
 %doc README.md
 %{_libdir}/dri/bc250_drv_video.so
+%{?_bindir}/bc250_stats
 %dir %{_datadir}/bc250
 %dir %{_datadir}/bc250/shaders
 %{_datadir}/bc250/shaders/*.spv
 %{_prefix}/lib/systemd/user-environment-generators/60-bc250-vaapi
 
 %changelog
+* Mon Nov 02 2026 BC-250 Project Contributors <support@bc250.org> - 1:0.5.4-1
+- Synchronize versioning with Release v0.5.4 and integrate bc250_stats telemetry
+- Support dynamic dlopen x264/x265 probing and RPM Fusion bcond toggles
+
 * Tue Sep 22 2026 SkillFishOS <info@mtsistemi.it> - 26.09.2-1
 - H.264 and H.265 decoding through VAEntrypointVLD, bit-exact against the
   reference decoder

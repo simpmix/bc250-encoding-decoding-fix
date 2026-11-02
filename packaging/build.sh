@@ -51,17 +51,19 @@ arch() {
     echo ">>> Arch / CachyOS / SteamOS"
     inside docker.io/library/archlinux:latest '
         pacman -Syu --noconfirm --needed base-devel cmake glslang \
-            vulkan-headers vulkan-icd-loader libva libdrm
+            vulkan-headers vulkan-icd-loader libva libdrm x264 x265 pkgconf
         useradd -m builder
         cp -a /src /work/src
-        tar czf /work/bc250-vaapi-26.09.2.tar.gz \
+        VERSION=$(sed -n "s/^pkgver=//p" /work/src/packaging/arch/PKGBUILD | tr -d "[:space:]")
+        VERSION=${VERSION:-0.5.4}
+        tar czf "/work/bc250-vaapi-${VERSION}.tar.gz" \
             --exclude=src/.git --exclude=src/debian \
             --exclude=src/packaging/out \
             --exclude=src/approach1-compute-encoder/build \
             --exclude=src/approach1-compute-encoder/redhat-linux-build \
             --exclude=*.tar.gz --exclude=*.deb --exclude=*.rpm \
             -C /work --transform "s,^src,bc250-vaapi-main," src
-        mv /work/bc250-vaapi-26.09.2.tar.gz /work/src/packaging/arch/
+        mv "/work/bc250-vaapi-${VERSION}.tar.gz" /work/src/packaging/arch/
         chown -R builder /work
         su builder -c "cd /work/src/packaging/arch && \
             makepkg --noconfirm --skipinteg --nocheck"
@@ -72,19 +74,28 @@ arch() {
 fedora() {
     echo ">>> Fedora / Bazzite / Silverblue"
     inside registry.fedoraproject.org/fedora:latest '
+        dnf -y install --nogpgcheck https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm || true
+        dnf -y install rpm-build rpmdevtools cmake gcc gcc-c++ make \
+            pkgconfig libva-devel libdrm-devel vulkan-headers \
+            vulkan-loader-devel glslang tar x264-devel x265-devel || \
         dnf -y install rpm-build rpmdevtools cmake gcc gcc-c++ make \
             pkgconfig libva-devel libdrm-devel vulkan-headers \
             vulkan-loader-devel glslang tar
         rpmdev-setuptree
         cp -a /src /work/src
-        tar czf ~/rpmbuild/SOURCES/bc250-vaapi-26.09.2.tar.gz \
+        VERSION=$(rpm -q --qf "%{version}" --specfile /work/src/packaging/fedora/bc250-vaapi.spec 2>/dev/null | head -1)
+        VERSION=${VERSION:-0.5.4}
+        tar czf ~/rpmbuild/SOURCES/bc250-vaapi-${VERSION}.tar.gz \
             --exclude=src/.git --exclude=src/debian \
             --exclude=src/packaging/out \
             --exclude=src/approach1-compute-encoder/build \
             --exclude=src/approach1-compute-encoder/redhat-linux-build \
             --exclude=*.tar.gz --exclude=*.deb --exclude=*.rpm \
             -C /work --transform "s,^src,bc250-vaapi-main," src
-        rpmbuild -bb /work/src/packaging/fedora/bc250-vaapi.spec
+        RPMBUILD_FLAGS=""
+        if ! pkg-config --exists x264 2>/dev/null; then RPMBUILD_FLAGS="$RPMBUILD_FLAGS --without x264"; fi
+        if ! pkg-config --exists x265 2>/dev/null; then RPMBUILD_FLAGS="$RPMBUILD_FLAGS --without x265"; fi
+        rpmbuild -bb $RPMBUILD_FLAGS /work/src/packaging/fedora/bc250-vaapi.spec
         cp ~/rpmbuild/RPMS/x86_64/*.rpm /out/
     '
 }
@@ -95,9 +106,10 @@ debian() {
         apt-get update
         DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential debhelper cmake pkgconf libva-dev libdrm-dev \
-            libvulkan-dev glslang-tools ca-certificates
+            libvulkan-dev glslang-tools ca-certificates libx264-dev libx265-dev
         cp -a /src /work/src
         cd /work/src
+        rm -rf debian approach1-compute-encoder/build approach1-compute-encoder/redhat-linux-build
         cp -a packaging/debian debian
         dpkg-buildpackage -us -uc -b
         cp /work/*.deb /out/

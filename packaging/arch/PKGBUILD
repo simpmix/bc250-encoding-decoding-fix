@@ -1,4 +1,4 @@
-# Maintainer: SkillFishOS <info@mtsistemi.it>
+# Maintainer: BC-250 Project Contributors <support@bc250.org>
 #
 # VA-API video encoding and decoding for the AMD BC-250 (Cyan Skillfish).
 # For CachyOS, Arch, SteamOS, HoloISO and anything else pacman-based.
@@ -9,11 +9,11 @@
 # file for why.
 
 pkgname=bc250-vaapi
-pkgver=26.09.2
+pkgver=0.5.4
 pkgrel=1
 pkgdesc="VA-API video encoding and decoding for the AMD BC-250 (Cyan Skillfish)"
 arch=('x86_64')
-url="https://github.com/MTSistemi/bc250-vaapi"
+url="https://github.com/simpmix/bc250-encoding-decoding-fix"
 license=('GPL-3.0-only')
 depends=('libva' 'libdrm' 'vulkan-icd-loader' 'x264' 'x265')
 makedepends=('cmake' 'glslang' 'vulkan-headers' 'pkgconf')
@@ -46,8 +46,7 @@ build() {
         -DCMAKE_INSTALL_PREFIX=/usr \
         -DLIBVA_DRIVERS_PATH=/usr/lib/dri \
         -DBUILD_TESTS=OFF
-    cmake --build build -j"$(nproc)" \
-        --target bc250_drv_video compile_shaders
+    cmake --build build -j"$(nproc)"
 }
 
 package() {
@@ -59,6 +58,11 @@ package() {
     install -d "$pkgdir/usr/share/bc250/shaders"
     install -m644 approach1-compute-encoder/build/*.spv \
         "$pkgdir/usr/share/bc250/shaders/"
+
+    if [ -f approach1-compute-encoder/build/bc250_stats ]; then
+        install -Dm755 approach1-compute-encoder/build/bc250_stats \
+            "$pkgdir/usr/bin/bc250_stats"
+    fi
 
     install -Dm755 packaging/common/60-bc250-vaapi \
         "$pkgdir/usr/lib/systemd/user-environment-generators/60-bc250-vaapi"
