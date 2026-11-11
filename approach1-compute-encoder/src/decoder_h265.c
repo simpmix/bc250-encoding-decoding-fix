@@ -20,6 +20,7 @@
 #include <unistd.h>
 #if defined(__SSE2__) || defined(__x86_64__) || defined(_M_X64)
 #include <emmintrin.h>
+#include <immintrin.h>
 #endif
 
 /* ⚠️ More than the sixteen a stream may keep: a picture being decoded
@@ -1062,7 +1063,7 @@ void hevc_decoder_shift_entry_points(hevc_slice_t *s, const uint8_t *grezzo,
  * decoder alone. */
 
 #define LOAD_BAND 32                /* luma rows per band, sixteen of chroma */
-#define LOAD_MAX_THREAD 8
+#define LOAD_MAX_THREAD 16
 
 typedef struct {
     const hevcd_img_t *g;
@@ -1074,10 +1075,39 @@ typedef struct {
     _Atomic int next;
 } load_job_t;
 
+#if defined(__x86_64__) || defined(_M_X64)
+__attribute__((target("avx2")))
+static void interleave8_avx2(uint8_t *o, const uint8_t *a, const uint8_t *b, int n, int *out_x)
+{
+    int x = 0;
+    for (; x + 32 <= n; x += 32) {
+        __m256i va = _mm256_loadu_si256((const __m256i *)(a + x));
+        __m256i vb = _mm256_loadu_si256((const __m256i *)(b + x));
+        __m256i lo = _mm256_unpacklo_epi8(va, vb);
+        __m256i hi = _mm256_unpackhi_epi8(va, vb);
+        __m256i out0 = _mm256_permute2x128_si256(lo, hi, 0x20);
+        __m256i out1 = _mm256_permute2x128_si256(lo, hi, 0x31);
+        _mm256_storeu_si256((__m256i *)(o + 2 * x), out0);
+        _mm256_storeu_si256((__m256i *)(o + 2 * x + 32), out1);
+    }
+    *out_x = x;
+}
+#endif
+
 static void interleave8(uint8_t *o, const uint8_t *a, const uint8_t *b, int n)
 {
     int x = 0;
-#if defined(__SSE2__) || defined(__x86_64__) || defined(_M_X64)
+#if defined(__x86_64__) || defined(_M_X64)
+    if (__builtin_cpu_supports("avx2")) {
+        interleave8_avx2(o, a, b, n, &x);
+    }
+    for (; x + 16 <= n; x += 16) {
+        const __m128i va = _mm_loadu_si128((const __m128i *)(a + x));
+        const __m128i vb = _mm_loadu_si128((const __m128i *)(b + x));
+        _mm_storeu_si128((__m128i *)(o + 2 * x), _mm_unpacklo_epi8(va, vb));
+        _mm_storeu_si128((__m128i *)(o + 2 * x + 16), _mm_unpackhi_epi8(va, vb));
+    }
+#elif defined(__SSE2__)
     for (; x + 16 <= n; x += 16) {
         const __m128i va = _mm_loadu_si128((const __m128i *)(a + x));
         const __m128i vb = _mm_loadu_si128((const __m128i *)(b + x));
@@ -1088,11 +1118,33 @@ static void interleave8(uint8_t *o, const uint8_t *a, const uint8_t *b, int n)
     for (; x < n; x++) { o[2 * x] = a[x]; o[2 * x + 1] = b[x]; }
 }
 
+#if defined(__x86_64__) || defined(_M_X64)
+__attribute__((target("avx2")))
+static void shift10_avx2(uint16_t *o, const uint16_t *s, int n, int *out_x)
+{
+    int x = 0;
+    for (; x + 16 <= n; x += 16) {
+        __m256i v = _mm256_loadu_si256((const __m256i *)(s + x));
+        __m256i shifted = _mm256_slli_epi16(v, 6);
+        _mm256_storeu_si256((__m256i *)(o + x), shifted);
+    }
+    *out_x = x;
+}
+#endif
+
 /* P010 keeps its ten bits at the top of each sixteen. */
 static void shift10(uint16_t *o, const uint16_t *s, int n)
 {
     int x = 0;
-#if defined(__SSE2__) || defined(__x86_64__) || defined(_M_X64)
+#if defined(__x86_64__) || defined(_M_X64)
+    if (__builtin_cpu_supports("avx2")) {
+        shift10_avx2(o, s, n, &x);
+    } else {
+        for (; x + 8 <= n; x += 8)
+            _mm_storeu_si128((__m128i *)(o + x),
+                _mm_slli_epi16(_mm_loadu_si128((const __m128i *)(s + x)), 6));
+    }
+#elif defined(__SSE2__)
     for (; x + 8 <= n; x += 8)
         _mm_storeu_si128((__m128i *)(o + x),
             _mm_slli_epi16(_mm_loadu_si128((const __m128i *)(s + x)), 6));
@@ -1100,11 +1152,44 @@ static void shift10(uint16_t *o, const uint16_t *s, int n)
     for (; x < n; x++) o[x] = (uint16_t)(s[x] << 6);
 }
 
+#if defined(__x86_64__) || defined(_M_X64)
+__attribute__((target("avx2")))
+static void interleave10_avx2(uint16_t *o, const uint16_t *a, const uint16_t *b,
+                             int n, int *out_x)
+{
+    int x = 0;
+    for (; x + 16 <= n; x += 16) {
+        __m256i va = _mm256_slli_epi16(_mm256_loadu_si256((const __m256i *)(a + x)), 6);
+        __m256i vb = _mm256_slli_epi16(_mm256_loadu_si256((const __m256i *)(b + x)), 6);
+        __m256i lo = _mm256_unpacklo_epi16(va, vb);
+        __m256i hi = _mm256_unpackhi_epi16(va, vb);
+        __m256i out0 = _mm256_permute2x128_si256(lo, hi, 0x20);
+        __m256i out1 = _mm256_permute2x128_si256(lo, hi, 0x31);
+        _mm256_storeu_si256((__m256i *)(o + 2 * x), out0);
+        _mm256_storeu_si256((__m256i *)(o + 2 * x + 16), out1);
+    }
+    *out_x = x;
+}
+#endif
+
 static void interleave10(uint16_t *o, const uint16_t *a, const uint16_t *b,
                          int n)
 {
     int x = 0;
-#if defined(__SSE2__) || defined(__x86_64__) || defined(_M_X64)
+#if defined(__x86_64__) || defined(_M_X64)
+    if (__builtin_cpu_supports("avx2")) {
+        interleave10_avx2(o, a, b, n, &x);
+    } else {
+        for (; x + 8 <= n; x += 8) {
+            const __m128i va = _mm_slli_epi16(
+                _mm_loadu_si128((const __m128i *)(a + x)), 6);
+            const __m128i vb = _mm_slli_epi16(
+                _mm_loadu_si128((const __m128i *)(b + x)), 6);
+            _mm_storeu_si128((__m128i *)(o + 2 * x), _mm_unpacklo_epi16(va, vb));
+            _mm_storeu_si128((__m128i *)(o + 2 * x + 8), _mm_unpackhi_epi16(va, vb));
+        }
+    }
+#elif defined(__SSE2__)
     for (; x + 8 <= n; x += 8) {
         const __m128i va = _mm_slli_epi16(
             _mm_loadu_si128((const __m128i *)(a + x)), 6);

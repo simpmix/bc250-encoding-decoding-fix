@@ -81,6 +81,15 @@ typedef struct {
     int      recent_bits_count;
     double   ema_frame_bits;           /* EMA of recent frame sizes */
     uint32_t bandwidth_drops_handled;  /* telemetry counter */
+
+    /* Adaptive Frame Pacing */
+    struct {
+        uint64_t target_interval_us;   /* Nominal frame interval in microseconds (1e6 / fps) */
+        uint64_t last_dispatch_us;     /* Timestamp of previous frame dispatch */
+        int64_t  accumulated_delay_us; /* Running drift between target interval and actual execution */
+        uint32_t burst_limit_us;       /* Maximum allowed pacing delay to prevent pipeline stalling */
+        int      pacing_enabled;       /* 1 = active pacing enabled */
+    } pacing;
 } rate_control_t;
 
 void rc_init(rate_control_t *rc, rc_mode_t mode, uint32_t bitrate, double fps,
@@ -106,5 +115,10 @@ void rc_set_jitter_smoothing(rate_control_t *rc, int enable);
 int  rc_get_jitter_smoothing(const rate_control_t *rc);
 void rc_notify_network_congestion(rate_control_t *rc, double drop_ratio);
 void rc_reset_congestion(rate_control_t *rc);
+
+/* Adaptive frame pacing controls */
+void rc_set_pacing_enabled(rate_control_t *rc, int enable);
+int  rc_get_pacing_enabled(const rate_control_t *rc);
+uint32_t rc_calculate_pacing_delay_us(rate_control_t *rc);
 
 #endif

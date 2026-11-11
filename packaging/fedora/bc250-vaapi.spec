@@ -16,7 +16,7 @@
 
 Name:           bc250-vaapi
 Epoch:          1
-Version:        0.5.4
+Version:        0.5.5
 Release:        1%{?dist}
 Summary:        VA-API video encoding and decoding for the AMD BC-250
 
@@ -121,6 +121,12 @@ install -Dpm 0755 packaging/common/60-bc250-vaapi \
 %{_prefix}/lib/systemd/user-environment-generators/60-bc250-vaapi
 
 %changelog
+* Wed Nov 11 2026 BC-250 Project Contributors <support@bc250.org> - 1:0.5.5-1
+- AVX2 SIMD acceleration for 10-bit HEVC motion compensation, SAO and residual addition (closes #64)
+- 16-thread parallel surface loading and AVX2 P010 packing/unpacking
+- Enhanced rate control with adaptive frame pacing and burst limiting
+- Avoid redundant GPU compute fence syncs on video playback decode surfaces
+
 * Mon Nov 02 2026 BC-250 Project Contributors <support@bc250.org> - 1:0.5.4-1
 - Synchronize versioning with Release v0.5.4 and integrate bc250_stats telemetry
 - Support dynamic dlopen x264/x265 probing and RPM Fusion bcond toggles

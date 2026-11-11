@@ -1632,6 +1632,7 @@ VAStatus bc250_EndPicture(VADriverContextP ctx, VAContextID context) {
 
         const int rc = gpu_compute_video_proc(&data->gpu, &from->image, sr,
                                               &surf->image, dr);
+        if (rc == 0) surf->gpu_work_pending = 1;
         c->vpp_state.has_source = 0;
         DRIVER_UNLOCK(data);
         return rc == 0 ? VA_STATUS_SUCCESS : VA_STATUS_ERROR_OPERATION_FAILED;
@@ -1773,6 +1774,7 @@ VAStatus bc250_EndPicture(VADriverContextP ctx, VAContextID context) {
      * state ourselves. */
     if (VALID_ID(c->current_render_target, MAX_SURFACES) && data->surfaces[c->current_render_target].allocated) {
         data->surfaces[c->current_render_target].image.current_layout = VK_IMAGE_LAYOUT_GENERAL;
+        data->surfaces[c->current_render_target].gpu_work_pending = 1;
     }
 
     DRIVER_UNLOCK(data);
@@ -1797,11 +1799,14 @@ VAStatus bc250_SyncSurface(VADriverContextP ctx, VASurfaceID render_target) {
     }
     wait_decoded(data, render_target);
     const VAStatus decoded = data->surfaces[render_target].decode_status;
-    int slot = gpu_compute_submitted_slot(&data->gpu);
+    int slot = -1;
+    if (data->surfaces[render_target].gpu_work_pending) {
+        slot = gpu_compute_submitted_slot(&data->gpu);
+        data->surfaces[render_target].gpu_work_pending = 0;
+    }
     DRIVER_UNLOCK(data);
 
-    /* Unlocked wait for GPU fence: prevents blocking concurrent encoder_thread
-     * actions while filter_thread waits on GPU completion. */
+    /* Unlocked wait for GPU fence: only if GPU compute work was submitted for this render target */
     if (slot >= 0) {
         int sync_res = gpu_compute_sync_slot(&data->gpu, slot);
         if (sync_res != 0) return VA_STATUS_ERROR_OPERATION_FAILED;

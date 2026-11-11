@@ -4455,3 +4455,38 @@ Issue #63 reported by Francesco Gugliuzza (`fgugliuzza`) identified a build fail
 * In [`packaging/verify.sh`](file:///D:/Kai/bc250-encoding-decoding-fix/packaging/verify.sh), replaced hardcoded legacy package paths with flexible glob patterns (`/pkg/bc250-vaapi*.deb`), and added runtime codec libraries (`x264 x265`) to Arch verification containers.
 * Integrated automated Debian package building and verification (`packaging/build.sh debian` and `packaging/verify.sh debian`) directly into [`.github/workflows/build.yml`](file:///D:/Kai/bc250-encoding-decoding-fix/.github/workflows/build.yml) via the `package-debian` job.
 * Debian `.deb` packages are now validated with `ldd -r` and uploaded as workflow artifacts on every push, ensuring packaging regressions are caught immediately in CI.
+
+## 42. Release v0.5.5: AVX2 10-Bit HEVC Decoding, Adaptive Frame Pacing & Latency Hardening (Issue #64)
+
+### 42.1 Issue #64 Diagnosis: 4K 10-Bit HDR Playback Bottleneck
+Issue #64 submitted by `Omalley13` reported:
+`[BUG] Mpv dropping a lot of frames when playing hdr video`
+Visual evidence from mpv stats overlay showed 4K 23.976 fps HEVC Main 10 playback with:
+* `A-V: +13.2135` (audio-video desync over 13 seconds)
+* `Dropped Frames: 0 (decoder) 1028 (output)`
+* Frame Fresh: ~4.8ms (only the VO blit pass)
+
+Detailed architectural audit of [`approach1-compute-encoder/src/`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/) revealed:
+1. In [`approach1-compute-encoder/src/hevc_mc.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/hevc_mc.c), `use_vectors()` was hardcoded to `a && ha_ssse3() && bd == 8;`, forcing all 10-bit HEVC motion compensation to pure scalar execution.
+2. In [`approach1-compute-encoder/src/hevc_add_template.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/hevc_add_template.c), residual addition (`add_residual`) was unvectorized for both 8-bit and 10-bit.
+3. In [`approach1-compute-encoder/src/hevc_filter.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/hevc_filter.c), Sample Adaptive Offset (SAO) edge filtering for 10-bit was entirely scalar.
+4. In [`approach1-compute-encoder/src/decoder_h265.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/decoder_h265.c), `LOAD_MAX_THREAD` was capped at 8 (underutilizing the 16 Zen 2 hardware threads on the BC-250), and `shift10`/`interleave10` only used 128-bit SSE2.
+5. In [`approach1-compute-encoder/src/va_backend.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/va_backend.c), `bc250_SyncSurface()` unconditionally waited on Vulkan GPU compute fences even for pure CPU decode surfaces, creating unnecessary kernel syscall overhead on every frame.
+
+### 42.2 AVX2 SIMD Vectorization Implementation
+* In [`approach1-compute-encoder/src/hevc_mc.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/hevc_mc.c), implemented AVX2/SSE 10-bit vector routines (`average_10_avx2`, `one_pred_10_avx2`, `two_pred_10_avx2`) and updated `use_vectors()` to support `bd == 10`.
+* In [`approach1-compute-encoder/src/hevc_mc_template.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/hevc_mc_template.c), enabled `vert8_16_any` and `vert4_16_any` vectorization for 16-bit intermediate passes in 10-bit mode, routing prediction passes to 10-bit vector routines.
+* In [`approach1-compute-encoder/src/hevc_add_template.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/hevc_add_template.c), vectorized `add_residual` using AVX2 and SSE2 for both 10-bit (clamped to 1023) and 8-bit (saturating pack to 255).
+* In [`approach1-compute-encoder/src/hevc_filter.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/hevc_filter.c), implemented `sao_edge_row_10_avx2` and `sao_edge_row_10_sse`.
+* In [`approach1-compute-encoder/src/decoder_h265.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/decoder_h265.c), implemented `shift10_avx2`, `interleave10_avx2`, and `interleave8_avx2`, and increased `LOAD_MAX_THREAD` to 16.
+* In [`approach1-compute-encoder/src/gpu_compute.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/gpu_compute.c), added AVX2 row shifting in `gpu_compute_upload_p010`.
+* In [`approach1-compute-encoder/src/encoder_x265.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/encoder_x265.c), vectorized P010 luma unpacking (`>> 6`) with AVX2 and SSE2.
+
+### 42.3 Elimination of Redundant GPU Fence Waits
+* Added `gpu_work_pending` tracking to `struct bc250_surface` in [`approach1-compute-encoder/src/va_backend.h`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/va_backend.h).
+* In [`approach1-compute-encoder/src/va_backend.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/va_backend.c), `bc250_SyncSurface()` checks `surf->gpu_work_pending` before invoking `gpu_compute_sync_slot()`. Pure CPU decode surfaces bypass Vulkan fence synchronization completely.
+
+### 42.4 Adaptive Frame Pacing & Rate Control Enhancements
+* In [`approach1-compute-encoder/src/rate_control.h`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/rate_control.h) and [`approach1-compute-encoder/src/rate_control.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/rate_control.c), added adaptive frame pacing (`rc_pacing_t`) with `rc_calculate_pacing_delay_us()`, clamping burst delays to `burst_limit_us`.
+* Integrated perceptual temporal motion masking in `rc_get_frame_qp()`, adjusting QP by +1 during high-motion bursts (>12.0 SAD per pixel) and -1 during static/low-motion frames (<0.5 SAD per pixel).
+* Added comprehensive unit tests in [`approach1-compute-encoder/tests/test_dynamic_governor.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/tests/test_dynamic_governor.c) validating frame pacing, burst limits, and motion masking.

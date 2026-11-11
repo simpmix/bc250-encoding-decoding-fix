@@ -14,6 +14,7 @@
 #include <math.h>
 #include "dynamic_governor.h"
 #include "telemetry.h"
+#include "rate_control.h"
 
 static void test_governor_transitions(void)
 {
@@ -406,6 +407,74 @@ static void test_telemetry_subsystem(void)
     printf("  ✓ Telemetry subsystem verified!\n");
 }
 
+static void test_rate_control_pacing(void)
+{
+    printf("[TEST] Testing rate control adaptive frame pacing...\n");
+
+    rate_control_t rc;
+    rc_init(&rc, RC_LOW_LATENCY, 10000000, 60.0, 1920, 1080);
+
+    assert(rc.pacing.pacing_enabled == 1);
+    assert(rc.pacing.target_interval_us == 16666);
+    assert(rc.pacing.burst_limit_us == 8333);
+
+    rc_set_pacing_enabled(&rc, 0);
+    assert(rc_get_pacing_enabled(&rc) == 0);
+    assert(rc_calculate_pacing_delay_us(&rc) == 0);
+
+    rc_set_pacing_enabled(&rc, 1);
+    assert(rc_get_pacing_enabled(&rc) == 1);
+
+    /* First frame returns 0 delay to anchor the clock */
+    uint32_t d0 = rc_calculate_pacing_delay_us(&rc);
+    assert(d0 == 0);
+    assert(rc.pacing.last_dispatch_us > 0);
+
+    /* Consecutive immediate calculation computes non-zero delay bounded by burst limit */
+    uint32_t d1 = rc_calculate_pacing_delay_us(&rc);
+    assert(d1 > 0);
+    assert(d1 <= rc.pacing.burst_limit_us);
+
+    printf("  ✓ Rate control adaptive frame pacing verified!\n");
+}
+
+static void test_rate_control_jitter_and_burst(void)
+{
+    printf("[TEST] Testing rate control jitter smoothing & congestion response...\n");
+
+    rate_control_t rc;
+    rc_init(&rc, RC_LOW_LATENCY, 10000000, 60.0, 1920, 1080);
+    assert(rc.jitter_smoothing_enabled == 1);
+
+    /* Trigger 40% network congestion drop */
+    rc_notify_network_congestion(&rc, 0.40);
+    assert(rc.target_bitrate == 6000000);
+    assert(rc.bandwidth_drops_handled == 1);
+    assert(rc.jitter_burst_cap_bits > 0);
+
+    /* Test recovery */
+    rc_reset_congestion(&rc);
+    assert(rc.target_bitrate == 10000000);
+
+    printf("  ✓ Rate control jitter smoothing & congestion response verified!\n");
+}
+
+static void test_rate_control_motion_masking(void)
+{
+    printf("[TEST] Testing perceptual temporal motion masking...\n");
+
+    rate_control_t rc;
+    rc_init(&rc, RC_CBR, 10000000, 60.0, 1920, 1080);
+    int initial_qp = rc.current_qp;
+
+    /* Very high motion SAD (> 12.0 per pixel) */
+    uint64_t high_sad = (uint64_t)1920 * 1080 * 20;
+    int high_motion_qp = rc_get_frame_qp(&rc, high_sad);
+    assert(high_motion_qp >= initial_qp);
+
+    printf("  ✓ Perceptual temporal motion masking verified!\n");
+}
+
 int main(void)
 {
     /* The governor is off unless a live streaming server runs it; these
@@ -425,6 +494,9 @@ int main(void)
     test_governor_telemetry_stats();
     test_governor_deadline_and_predictive_pacing();
     test_telemetry_subsystem();
+    test_rate_control_pacing();
+    test_rate_control_jitter_and_burst();
+    test_rate_control_motion_masking();
 
     printf("\nALL DYNAMIC GOVERNOR TESTS PASSED!\n");
     return 0;

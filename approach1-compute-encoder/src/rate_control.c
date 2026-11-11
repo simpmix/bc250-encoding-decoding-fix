@@ -134,6 +134,18 @@ void rc_init(rate_control_t *rc, rc_mode_t mode, uint32_t bitrate, double fps,
     rc->bandwidth_drops_handled = 0;
     for (int i = 0; i < 8; i++) rc->recent_frame_bits[i] = 0;
 
+    /* Adaptive frame pacing initialization */
+    rc->pacing.target_interval_us = (uint64_t)(1000000.0 / (rc->framerate > 0 ? rc->framerate : 60.0));
+    rc->pacing.burst_limit_us = (uint32_t)(rc->pacing.target_interval_us / 2);
+    rc->pacing.last_dispatch_us = 0;
+    rc->pacing.accumulated_delay_us = 0;
+    rc->pacing.pacing_enabled = (mode == RC_LOW_LATENCY) ? 1 : 0;
+    const char *env_pacing = getenv("BC250_RC_PACING");
+    if (env_pacing) {
+        if (strcmp(env_pacing, "1") == 0 || strcmp(env_pacing, "true") == 0) rc->pacing.pacing_enabled = 1;
+        else if (strcmp(env_pacing, "0") == 0 || strcmp(env_pacing, "false") == 0) rc->pacing.pacing_enabled = 0;
+    }
+
     /* Diagnostic (BC250_DEBUG_RC=1): every rc_init with the target it was
      * actually handed and the base QP that fell out of it. Added while
      * root-causing "requested bitrate has no effect on output" - see
@@ -296,6 +308,19 @@ int rc_get_frame_qp(rate_control_t *rc, uint64_t est_sad) {
             qp_adjust += 2;
         } else if (rc->ema_frame_bits > (double)rc->target_bits_per_frame * 1.35) {
             qp_adjust += 1;
+        }
+    }
+
+    /* Perceptual temporal motion masking:
+     * High motion suppresses human visual sensitivity to spatial quantization artifacts.
+     * When motion density is high, gently bias QP higher (+1) to constrain bitstream spikes.
+     * In static/low-motion scenes, bias QP lower (-1) if buffer headroom allows to keep edges sharp. */
+    if (est_sad > 0 && rc->pixels > 0.0 && rc->mode != RC_CQP) {
+        double sad_per_pixel = (double)est_sad / rc->pixels;
+        if (sad_per_pixel > 12.0) {
+            qp_adjust += 1;
+        } else if (sad_per_pixel < 0.5 && error < 0 && rc->prev_frame_sad > 0) {
+            qp_adjust -= 1;
         }
     }
 
@@ -495,6 +520,42 @@ void rc_notify_network_congestion(rate_control_t *rc, double drop_ratio) {
 void rc_reset_congestion(rate_control_t *rc) {
     if (!rc || rc->nominal_bitrate == 0 || rc->target_bitrate == rc->nominal_bitrate) return;
     rc_update_bitrate(rc, rc->nominal_bitrate, rc->width, rc->height);
+}
+
+void rc_set_pacing_enabled(rate_control_t *rc, int enable) {
+    if (rc) rc->pacing.pacing_enabled = enable ? 1 : 0;
+}
+
+int rc_get_pacing_enabled(const rate_control_t *rc) {
+    return rc ? rc->pacing.pacing_enabled : 0;
+}
+
+uint32_t rc_calculate_pacing_delay_us(rate_control_t *rc) {
+    if (!rc || !rc->pacing.pacing_enabled || rc->pacing.target_interval_us == 0) {
+        return 0;
+    }
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    uint64_t now_us = (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_nsec / 1000ULL;
+
+    if (rc->pacing.last_dispatch_us == 0) {
+        rc->pacing.last_dispatch_us = now_us;
+        return 0;
+    }
+
+    uint64_t elapsed_us = (now_us > rc->pacing.last_dispatch_us) ? (now_us - rc->pacing.last_dispatch_us) : 0;
+    uint32_t delay_us = 0;
+
+    if (elapsed_us < rc->pacing.target_interval_us) {
+        uint64_t remaining_us = rc->pacing.target_interval_us - elapsed_us;
+        if (remaining_us > rc->pacing.burst_limit_us) {
+            remaining_us = rc->pacing.burst_limit_us;
+        }
+        delay_us = (uint32_t)remaining_us;
+    }
+
+    rc->pacing.last_dispatch_us = now_us + delay_us;
+    return delay_us;
 }
 
 /* ------------------------------------------------ model-based QP */

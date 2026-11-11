@@ -89,6 +89,7 @@ struct bc250_surface {
      * wait_decoded() in va_backend.c. */
     int decode_pending;
     VAStatus decode_status;
+    int gpu_work_pending; /* 1 if GPU compute (encode/vpp) commands are pending on this surface */
 };
 
 struct bc250_config {

@@ -71,13 +71,19 @@ VERTICAL(FUNC(vert4_16), 4, int16_t)
 
 
 
-/* The six that choose. ⚠️ The vector call only exists at eight bits: at
- * ten there is no vector version, because those pack to unsigned bytes
- * and every sample above 255 would come back as 255. */
+/* The six that choose. ⚠️ Eight-bit vector kernels process byte samples.
+ * Intermediate 16-bit vertical passes and 10-bit prediction functions
+ * use dedicated word-width SIMD kernels. */
 #if BIT_DEPTH == 8 && (defined(__x86_64__) || defined(_M_X64))
 #define TRY_VECTOR(f) if (vec) { f(s, sp, w, h, fl, o, po); return; }
 #else
 #define TRY_VECTOR(f) (void)vec;
+#endif
+
+#if defined(__x86_64__) || defined(_M_X64)
+#define TRY_VECTOR_16(f) if (vec) { f(s, sp, w, h, fl, o, po); return; }
+#else
+#define TRY_VECTOR_16(f) (void)vec;
 #endif
 
 static void FUNC(horiz8_any)(const pixel *s, int sp, int w, int h,
@@ -116,7 +122,7 @@ static void FUNC(vert8_16_any)(const int16_t *s, int sp, int w, int h,
                                const int8_t *fl, int16_t *o, int po,
                                int down, bool vec)
 {
-    TRY_VECTOR(vert8_16_v)
+    TRY_VECTOR_16(vert8_16_v)
     FUNC(vert8_16)(s, sp, w, h, fl, o, po, down);
 }
 
@@ -124,10 +130,11 @@ static void FUNC(vert4_16_any)(const int16_t *s, int sp, int w, int h,
                                const int8_t *fl, int16_t *o, int po,
                                int down, bool vec)
 {
-    TRY_VECTOR(vert4_16_v)
+    TRY_VECTOR_16(vert4_16_v)
     FUNC(vert4_16)(s, sp, w, h, fl, o, po, down);
 }
 #undef TRY_VECTOR
+#undef TRY_VECTOR_16
 
 /* The samples a block reads from a reference picture: where they lie, or a
  * copy of them with the picture's edges repeated outwards.
@@ -252,6 +259,8 @@ static void FUNC(one_pred)(pixel *dst, int stride, int w, int h,
 {
 #if BIT_DEPTH == 8 && (defined(__x86_64__) || defined(_M_X64))
     if (use_vectors(bd)) { one_pred_v(dst, stride, w, h, a, stride_a); return; }
+#elif BIT_DEPTH == 10 && (defined(__x86_64__) || defined(_M_X64))
+    if (use_vectors(bd)) { one_pred_10_v(dst, stride, w, h, a, stride_a); return; }
 #endif
     /* 8.5.3.3.4.2: shift1 = 14 - BitDepth, offset1 = 1 << (shift1 - 1) */
     const int sh = 14 - bd, add = 1 << (13 - bd);
@@ -269,6 +278,11 @@ static void FUNC(two_pred)(pixel *dst, int stride, int w, int h,
         two_pred_v(dst, stride, w, h, a, b, stride_p);
         return;
     }
+#elif BIT_DEPTH == 10 && (defined(__x86_64__) || defined(_M_X64))
+    if (use_vectors(bd)) {
+        two_pred_10_v(dst, stride, w, h, a, b, stride_p);
+        return;
+    }
 #endif
     const int sh = 15 - bd, add = 1 << (14 - bd);
     for (int r = 0; r < h; r++)
@@ -284,6 +298,8 @@ static void FUNC(average)(pixel *dst, int stride, const pixel *a, int sa,
 {
 #if BIT_DEPTH == 8 && (defined(__x86_64__) || defined(_M_X64))
     if (use_vectors(bd)) { average_v(dst, stride, a, sa, b, sb, w, h); return; }
+#elif BIT_DEPTH == 10 && (defined(__x86_64__) || defined(_M_X64))
+    if (use_vectors(bd)) { average_10_v(dst, stride, a, sa, b, sb, w, h); return; }
 #endif
     (void)bd;
     for (int r = 0; r < h; r++)

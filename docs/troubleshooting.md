@@ -641,3 +641,14 @@ The `bc250_stats` monitor tool automatically checks the current user's UID, `SUD
 ```bash
 ./tools/bc250_stats --watch
 ```
+
+## 25. 4K 10-Bit HEVC (HDR) Playback Dropping Output Frames (Issue #64)
+
+### Symptoms
+Playing 4K (3840x2160) 10-bit HEVC (Main 10) HDR videos in `mpv` shows massive audio-video desync (`A-V: +13s` or higher) and thousands of dropped output frames (`Dropped Frames: 0 (decoder) 1000+ (output)`), while mpv stats report small VO render times ("Fresh: 4.8ms").
+
+### Cause
+In pre-v0.5.5 releases, 10-bit HEVC motion compensation was hardcoded to scalar execution (`bd == 8` check in `hevc_mc.c`), while Sample Adaptive Offset (SAO) and residual addition were unvectorized. For 4K frames (~25 million 10-bit samples), scalar processing required >150ms per frame, far exceeding the 41.7ms frame deadline at 23.976 fps. In addition, `vaSyncSurface()` unconditionally performed Vulkan fence wait syscalls on decode surfaces.
+
+### Solution
+Update to release **v0.5.5+**. Release v0.5.5 introduces AVX2 SIMD acceleration for 10-bit HEVC motion compensation, SAO edge filtering, residual reconstruction, 16-thread surface upload parallelization, and zero-syscall decode surface synchronization. Decode time per 4K 10-bit frame is reduced below 20ms, sustaining smooth 4K 60fps/24fps HDR playback without frame drops.

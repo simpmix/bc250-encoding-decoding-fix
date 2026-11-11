@@ -2596,6 +2596,28 @@ void gpu_compute_unmap_surface(gpu_context_t *ctx, gpu_memory_t memory,
     if (unmap && ctx) vkUnmapMemory(ctx->device, memory.memory);
 }
 
+static int wc_has_avx2(void) {
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    return __builtin_cpu_supports("avx2") ? 1 : 0;
+#else
+    return 0;
+#endif
+}
+
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+__attribute__((target("avx2"), unused))
+static void shift_row_p010_avx2(uint16_t *dst, const uint16_t *src, int n) {
+    int x = 0;
+    for (; x + 16 <= n; x += 16) {
+        __m256i v = _mm256_loadu_si256((const __m256i *)(src + x));
+        _mm256_storeu_si256((__m256i *)(dst + x), _mm256_slli_epi16(v, 6));
+    }
+    for (; x < n; x++) {
+        dst[x] = (uint16_t)(src[x] << 6);
+    }
+}
+#endif
+
 /* The ten-bit upload. See gpu_compute.h: the shift into P010's high bits
  * is here, and the plane addressing is whatever Vulkan says it is, asked
  * for through the same query the eight-bit path uses. */
@@ -2619,11 +2641,18 @@ int gpu_compute_upload_p010(gpu_context_t *ctx, gpu_image_t *image,
         needs_unmap = 1;
     }
 
+    int avx2 = wc_has_avx2();
     for (int r = 0; r < height; r++) {
         uint16_t *o = (uint16_t *)(mapped + lay.y_offset
                                    + (size_t)r * lay.y_pitch);
         const uint16_t *s = (const uint16_t *)((const uint8_t *)y_plane
                                                + (size_t)r * y_pitch);
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+        if (avx2) {
+            shift_row_p010_avx2(o, s, width);
+            continue;
+        }
+#endif
         for (int x = 0; x < width; x++) o[x] = (uint16_t)(s[x] << 6);
     }
 
@@ -2633,6 +2662,12 @@ int gpu_compute_upload_p010(gpu_context_t *ctx, gpu_image_t *image,
                                    + (size_t)r * lay.uv_pitch);
         const uint16_t *s = (const uint16_t *)((const uint8_t *)uv_plane
                                                + (size_t)r * uv_pitch);
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+        if (avx2) {
+            shift_row_p010_avx2(o, s, width);
+            continue;
+        }
+#endif
         for (int x = 0; x < width; x++) o[x] = (uint16_t)(s[x] << 6);
     }
 
@@ -2740,14 +2775,6 @@ static void copy_from_wc_avx2(uint8_t *dst, const uint8_t *src, size_t n) {
     _mm_sfence();
 }
 #endif
-
-static int wc_has_avx2(void) {
-#if defined(__x86_64__) || defined(_M_X64)
-    return __builtin_cpu_supports("avx2") ? 1 : 0;
-#else
-    return 0;
-#endif
-}
 
 static void copy_from_wc(uint8_t *dst, const uint8_t *src, size_t n, int avx2) {
 #if defined(__x86_64__) || defined(_M_X64)

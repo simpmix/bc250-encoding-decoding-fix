@@ -14,6 +14,33 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#include <immintrin.h>
+
+__attribute__((target("avx2"), unused))
+static void unpack_p010_row_avx2(uint16_t *dst, const uint16_t *src, size_t n) {
+    size_t c = 0;
+    for (; c + 16 <= n; c += 16) {
+        __m256i v = _mm256_loadu_si256((const __m256i *)(src + c));
+        _mm256_storeu_si256((__m256i *)(dst + c), _mm256_srli_epi16(v, 6));
+    }
+    for (; c < n; c++) {
+        dst[c] = src[c] >> 6;
+    }
+}
+
+__attribute__((target("sse2"), unused))
+static void unpack_p010_row_sse2(uint16_t *dst, const uint16_t *src, size_t n) {
+    size_t c = 0;
+    for (; c + 8 <= n; c += 8) {
+        __m128i v = _mm_loadu_si128((const __m128i *)(src + c));
+        _mm_storeu_si128((__m128i *)(dst + c), _mm_srli_epi16(v, 6));
+    }
+    for (; c < n; c++) {
+        dst[c] = src[c] >> 6;
+    }
+}
+#endif
 
 #if defined(__linux__)
 extern char *program_invocation_short_name;
@@ -628,9 +655,24 @@ int hevc_x265_encode(hevc_x265_t *x, const hevc_x265_config_t *cfg,
             }
             x->i420_y_cap = luma_sz;
         }
+        int has_avx2 = 0;
+        int has_sse2 = 0;
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+        has_avx2 = __builtin_cpu_supports("avx2");
+        has_sse2 = __builtin_cpu_supports("sse2");
+#endif
         for (size_t r = 0; r < cfg->height; r++) {
             const uint16_t *src_y_row = (const uint16_t *)(y + r * (size_t)y_stride);
             uint16_t *dst_y_row = (uint16_t *)(x->i420_y + r * (size_t)cfg->width * 2);
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+            if (has_avx2) {
+                unpack_p010_row_avx2(dst_y_row, src_y_row, cfg->width);
+                continue;
+            } else if (has_sse2) {
+                unpack_p010_row_sse2(dst_y_row, src_y_row, cfg->width);
+                continue;
+            }
+#endif
             for (size_t c = 0; c < cfg->width; c++) {
                 dst_y_row[c] = src_y_row[c] >> 6;
             }

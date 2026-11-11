@@ -52,7 +52,7 @@ if(TARGET OpenMP::OpenMP_C)
     target_link_libraries(test_cpu_simd_me PRIVATE OpenMP::OpenMP_C)
 endif()
 
-add_executable(test_dynamic_governor test_dynamic_governor.c ../src/dynamic_governor.c ../src/telemetry.c)
+add_executable(test_dynamic_governor test_dynamic_governor.c ../src/dynamic_governor.c ../src/telemetry.c ../src/rate_control.c)
 target_include_directories(test_dynamic_governor PRIVATE ../src)
 target_link_libraries(test_dynamic_governor PRIVATE m)
 

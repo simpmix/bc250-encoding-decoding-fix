@@ -816,16 +816,177 @@ static void average_v(uint8_t *dst, int stride, const uint8_t *a, int sa,
 {
     PICK(average, dst, stride, a, sa, b, sb, w, h);
 }
+
+static void average_10_sse(uint16_t *dst, int stride, const uint16_t *a, int sa,
+                           const uint16_t *b, int sb, int w, int h)
+{
+    for (int r = 0; r < h; r++) {
+        const uint16_t *pa = a + (size_t)r * sa;
+        const uint16_t *pb = b + (size_t)r * sb;
+        uint16_t *o = dst + (size_t)r * stride;
+        int c = 0;
+        for (; c + 8 <= w; c += 8)
+            _mm_storeu_si128((__m128i *)(o + c),
+                _mm_avg_epu16(_mm_loadu_si128((const __m128i *)(pa + c)),
+                              _mm_loadu_si128((const __m128i *)(pb + c))));
+        for (; c < w; c++) o[c] = (uint16_t)((pa[c] + pb[c] + 1) >> 1);
+    }
+}
+
+__attribute__((target("avx2")))
+static void average_10_avx2(uint16_t *dst, int stride, const uint16_t *a, int sa,
+                            const uint16_t *b, int sb, int w, int h)
+{
+    const int w16 = w & ~15;
+    for (int r = 0; r < h; r++) {
+        const uint16_t *pa = a + (size_t)r * sa;
+        const uint16_t *pb = b + (size_t)r * sb;
+        uint16_t *o = dst + (size_t)r * stride;
+        for (int c = 0; c < w16; c += 16)
+            _mm256_storeu_si256((__m256i *)(o + c),
+                _mm256_avg_epu16(_mm256_loadu_si256((const __m256i *)(pa + c)),
+                                _mm256_loadu_si256((const __m256i *)(pb + c))));
+    }
+    if (w16 < w)
+        average_10_sse(dst + w16, stride, a + w16, sa, b + w16, sb, w - w16, h);
+}
+
+static void average_10_v(uint16_t *dst, int stride, const uint16_t *a, int sa,
+                         const uint16_t *b, int sb, int w, int h)
+{
+    PICK(average_10, dst, stride, a, sa, b, sb, w, h);
+}
+
+static void one_pred_10_sse(uint16_t *dst, int stride, int w, int h,
+                            const int16_t *a, int stride_a)
+{
+    const __m128i add = _mm_set1_epi16(8);
+    const __m128i zero = _mm_setzero_si128();
+    const __m128i max_val = _mm_set1_epi16(1023);
+    for (int r = 0; r < h; r++) {
+        const int16_t *sa = a + (size_t)r * stride_a;
+        uint16_t *o = dst + (size_t)r * stride;
+        int c = 0;
+        for (; c + 8 <= w; c += 8) {
+            __m128i v = _mm_loadu_si128((const __m128i *)(sa + c));
+            v = _mm_srai_epi16(_mm_add_epi16(v, add), 4);
+            v = _mm_min_epi16(_mm_max_epi16(v, zero), max_val);
+            _mm_storeu_si128((__m128i *)(o + c), v);
+        }
+        for (; c < w; c++) {
+            int v = (sa[c] + 8) >> 4;
+            o[c] = (uint16_t)(v < 0 ? 0 : (v > 1023 ? 1023 : v));
+        }
+    }
+}
+
+__attribute__((target("avx2")))
+static void one_pred_10_avx2(uint16_t *dst, int stride, int w, int h,
+                             const int16_t *a, int stride_a)
+{
+    const int w16 = w & ~15;
+    const __m256i add = _mm256_set1_epi16(8);
+    const __m256i zero = _mm256_setzero_si256();
+    const __m256i max_val = _mm256_set1_epi16(1023);
+    for (int r = 0; r < h; r++) {
+        const int16_t *sa = a + (size_t)r * stride_a;
+        uint16_t *o = dst + (size_t)r * stride;
+        for (int c = 0; c < w16; c += 16) {
+            __m256i v = _mm256_loadu_si256((const __m256i *)(sa + c));
+            v = _mm256_srai_epi16(_mm256_add_epi16(v, add), 4);
+            v = _mm256_min_epi16(_mm256_max_epi16(v, zero), max_val);
+            _mm256_storeu_si256((__m256i *)(o + c), v);
+        }
+    }
+    if (w16 < w)
+        one_pred_10_sse(dst + w16, stride, w - w16, h, a + w16, stride_a);
+}
+
+static void one_pred_10_v(uint16_t *dst, int stride, int w, int h,
+                          const int16_t *a, int stride_a)
+{
+    PICK(one_pred_10, dst, stride, w, h, a, stride_a);
+}
+
+static void two_pred_10_sse(uint16_t *dst, int stride, int w, int h,
+                            const int16_t *a, const int16_t *b, int stride_p)
+{
+    const __m128i add = _mm_set1_epi32(16);
+    const __m128i zero = _mm_setzero_si128();
+    const __m128i max_val = _mm_set1_epi32(1023);
+    for (int r = 0; r < h; r++) {
+        const int16_t *sa = a + (size_t)r * stride_p;
+        const int16_t *sb = b + (size_t)r * stride_p;
+        uint16_t *o = dst + (size_t)r * stride;
+        int c = 0;
+        for (; c + 8 <= w; c += 8) {
+            __m128i va = _mm_loadu_si128((const __m128i *)(sa + c));
+            __m128i vb = _mm_loadu_si128((const __m128i *)(sb + c));
+            __m128i a_lo = _mm_srai_epi32(_mm_unpacklo_epi16(zero, va), 16);
+            __m128i a_hi = _mm_srai_epi32(_mm_unpackhi_epi16(zero, va), 16);
+            __m128i b_lo = _mm_srai_epi32(_mm_unpacklo_epi16(zero, vb), 16);
+            __m128i b_hi = _mm_srai_epi32(_mm_unpackhi_epi16(zero, vb), 16);
+            __m128i s_lo = _mm_srai_epi32(_mm_add_epi32(_mm_add_epi32(a_lo, b_lo), add), 5);
+            __m128i s_hi = _mm_srai_epi32(_mm_add_epi32(_mm_add_epi32(a_hi, b_hi), add), 5);
+            s_lo = _mm_min_epi32(_mm_max_epi32(s_lo, zero), max_val);
+            s_hi = _mm_min_epi32(_mm_max_epi32(s_hi, zero), max_val);
+            __m128i res = _mm_packs_epi32(s_lo, s_hi);
+            _mm_storeu_si128((__m128i *)(o + c), res);
+        }
+        for (; c < w; c++) {
+            int v = (sa[c] + sb[c] + 16) >> 5;
+            o[c] = (uint16_t)(v < 0 ? 0 : (v > 1023 ? 1023 : v));
+        }
+    }
+}
+
+__attribute__((target("avx2")))
+static void two_pred_10_avx2(uint16_t *dst, int stride, int w, int h,
+                             const int16_t *a, const int16_t *b, int stride_p)
+{
+    const int w16 = w & ~15;
+    const __m256i add = _mm256_set1_epi32(16);
+    const __m256i zero = _mm256_setzero_si256();
+    const __m256i max_val = _mm256_set1_epi32(1023);
+    for (int r = 0; r < h; r++) {
+        const int16_t *sa = a + (size_t)r * stride_p;
+        const int16_t *sb = b + (size_t)r * stride_p;
+        uint16_t *o = dst + (size_t)r * stride;
+        for (int c = 0; c < w16; c += 16) {
+            __m128i va_lo = _mm_loadu_si128((const __m128i *)(sa + c));
+            __m128i va_hi = _mm_loadu_si128((const __m128i *)(sa + c + 8));
+            __m128i vb_lo = _mm_loadu_si128((const __m128i *)(sb + c));
+            __m128i vb_hi = _mm_loadu_si128((const __m128i *)(sb + c + 8));
+            __m256i a32_lo = _mm256_cvtepi16_epi32(va_lo);
+            __m256i a32_hi = _mm256_cvtepi16_epi32(va_hi);
+            __m256i b32_lo = _mm256_cvtepi16_epi32(vb_lo);
+            __m256i b32_hi = _mm256_cvtepi16_epi32(vb_hi);
+            __m256i s_lo = _mm256_srai_epi32(_mm256_add_epi32(_mm256_add_epi32(a32_lo, b32_lo), add), 5);
+            __m256i s_hi = _mm256_srai_epi32(_mm256_add_epi32(_mm256_add_epi32(a32_hi, b32_hi), add), 5);
+            s_lo = _mm256_min_epi32(_mm256_max_epi32(s_lo, zero), max_val);
+            s_hi = _mm256_min_epi32(_mm256_max_epi32(s_hi, zero), max_val);
+            __m256i packed = _mm256_packs_epi32(s_lo, s_hi);
+            __m256i ordered = _mm256_permute4x64_epi64(packed, 0xd8);
+            _mm256_storeu_si256((__m256i *)(o + c), ordered);
+        }
+    }
+    if (w16 < w)
+        two_pred_10_sse(dst + w16, stride, w - w16, h, a + w16, b + w16, stride_p);
+}
+
+static void two_pred_10_v(uint16_t *dst, int stride, int w, int h,
+                          const int16_t *a, const int16_t *b, int stride_p)
+{
+    PICK(two_pred_10, dst, stride, w, h, a, b, stride_p);
+}
 #undef PICK
 #undef FILTER_PICK
 
 #endif /* x86-64 */
 
-/* ⚠️ The vector paths are eight bit only. They pack to unsigned bytes,
- * which at ten bits would saturate everything above 255 and hand back a
- * picture that looks decoded. So the depth decides, not only the
- * processor - and BC250_HEVC_NOSIMD forces the scalar path, so the suites
- * can be run through the code that carries every other depth. */
+/* ⚠️ Vector paths support both eight-bit and ten-bit bit depths.
+ * Ten-bit prediction uses dedicated 16-bit wide arithmetic, preventing
+ * saturation clipping while unlocking AVX2 and SSSE3 throughput. */
 static bool use_vectors(int bd)
 {
 #if defined(__x86_64__) || defined(_M_X64)
@@ -835,7 +996,7 @@ static bool use_vectors(int bd)
         a = getenv("BC250_HEVC_NOSIMD") ? 0 : 1;
         atomic_store_explicit(&allowed, a, memory_order_relaxed);
     }
-    return a && ha_ssse3() && bd == 8;
+    return a && ha_ssse3() && (bd == 8 || bd == 10);
 #else
     (void)bd;
     return false;

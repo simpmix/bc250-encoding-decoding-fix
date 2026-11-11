@@ -1,3 +1,13 @@
+bc250-vaapi (0.5.5-1) unstable; urgency=medium
+
+  * AVX2 SIMD acceleration for 10-bit HEVC motion compensation, SAO and residual addition (closes: #64).
+  * 16-thread parallel surface loading and AVX2 P010 packing/unpacking.
+  * Enhanced rate control with adaptive frame pacing and burst limiting.
+  * Avoid redundant GPU compute fence syncs on video playback decode surfaces.
+  * Synchronize packaging and versioning to 0.5.5.
+
+ -- BC-250 Project Contributors <support@bc250.org>  Wed, 11 Nov 2026 21:55:00 +0530
+
 bc250-vaapi (0.5.4-2) unstable; urgency=medium
 
   * Fix packaging/build.sh unmet build dependencies for Debian (closes: #63).

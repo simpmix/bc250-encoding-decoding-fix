@@ -618,11 +618,18 @@ static void FUNC(sao_block)(hevcd_t *d, int c, int rx, int ry,
             const pixel *pa = &B(xs + ax, y + ay);
             const pixel *pb = &B(xs + bx, y + by);
             pixel *out = plane + (size_t)y * stride + xs;
-#if BIT_DEPTH == 8 && (defined(__x86_64__) || defined(_M_X64))
+#if defined(__x86_64__) || defined(_M_X64)
+#if BIT_DEPTH == 8
             if (sao_vector()) {
                 sao_edge_row_ssse3(out, cur, pa, pb, xe - xs, table);
                 continue;
             }
+#elif BIT_DEPTH == 10
+            if (sao_vector()) {
+                sao_edge_row_10(out, cur, pa, pb, xe - xs, table);
+                continue;
+            }
+#endif
 #endif
             for (int i = 0; i < xe - xs; i++) {
                 const int v = cur[i];

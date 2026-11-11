@@ -91,6 +91,93 @@ static void sao_edge_row_ssse3(uint8_t *out, const uint8_t *cur,
         out[x] = (uint8_t)(r < 0 ? 0 : (r > 255 ? 255 : r));
     }
 }
+
+#if defined(__x86_64__) || defined(_M_X64)
+static void sao_edge_row_10_sse(uint16_t *out, const uint16_t *cur,
+                                const uint16_t *a, const uint16_t *b, int n,
+                                const int8_t table[16])
+{
+    const __m128i two = _mm_set1_epi16(2);
+    const __m128i zero = _mm_setzero_si128();
+    const __m128i max_val = _mm_set1_epi16(1023);
+    const int16_t t0 = (int16_t)table[0];
+    const int16_t t1 = (int16_t)table[1];
+    const int16_t t3 = (int16_t)table[3];
+    const int16_t t4 = (int16_t)table[4];
+    int x = 0;
+    for (; x + 8 <= n; x += 8) {
+        __m128i v = _mm_loadu_si128((const __m128i *)(cur + x));
+        __m128i as = _mm_loadu_si128((const __m128i *)(a + x));
+        __m128i bs = _mm_loadu_si128((const __m128i *)(b + x));
+        __m128i sa = _mm_sub_epi16(_mm_cmpgt_epi16(as, v), _mm_cmpgt_epi16(v, as));
+        __m128i sb = _mm_sub_epi16(_mm_cmpgt_epi16(bs, v), _mm_cmpgt_epi16(v, bs));
+        __m128i idx = _mm_add_epi16(_mm_add_epi16(sa, sb), two);
+        __m128i is0 = _mm_cmpeq_epi16(idx, zero);
+        __m128i is1 = _mm_cmpeq_epi16(idx, _mm_set1_epi16(1));
+        __m128i is3 = _mm_cmpeq_epi16(idx, _mm_set1_epi16(3));
+        __m128i is4 = _mm_cmpeq_epi16(idx, _mm_set1_epi16(4));
+        __m128i off = _mm_or_si128(
+            _mm_or_si128(_mm_and_si128(is0, _mm_set1_epi16(t0)), _mm_and_si128(is1, _mm_set1_epi16(t1))),
+            _mm_or_si128(_mm_and_si128(is3, _mm_set1_epi16(t3)), _mm_and_si128(is4, _mm_set1_epi16(t4)))
+        );
+        __m128i res = _mm_add_epi16(v, off);
+        res = _mm_min_epi16(_mm_max_epi16(res, zero), max_val);
+        _mm_storeu_si128((__m128i *)(out + x), res);
+    }
+    for (; x < n; x++) {
+        const int v = cur[x];
+        const int idx = 2 + (v > a[x]) - (v < a[x]) + (v > b[x]) - (v < b[x]);
+        const int r = v + table[idx];
+        out[x] = (uint16_t)(r < 0 ? 0 : (r > 1023 ? 1023 : r));
+    }
+}
+
+__attribute__((target("avx2")))
+static void sao_edge_row_10_avx2(uint16_t *out, const uint16_t *cur,
+                                 const uint16_t *a, const uint16_t *b, int n,
+                                 const int8_t table[16])
+{
+    const int n16 = n & ~15;
+    const __m256i two = _mm256_set1_epi16(2);
+    const __m256i zero = _mm256_setzero_si256();
+    const __m256i max_val = _mm256_set1_epi16(1023);
+    const int16_t t0 = (int16_t)table[0];
+    const int16_t t1 = (int16_t)table[1];
+    const int16_t t3 = (int16_t)table[3];
+    const int16_t t4 = (int16_t)table[4];
+    for (int x = 0; x < n16; x += 16) {
+        __m256i v = _mm256_loadu_si256((const __m256i *)(cur + x));
+        __m256i as = _mm256_loadu_si256((const __m256i *)(a + x));
+        __m256i bs = _mm256_loadu_si256((const __m256i *)(b + x));
+        __m256i sa = _mm256_sub_epi16(_mm256_cmpgt_epi16(as, v), _mm256_cmpgt_epi16(v, as));
+        __m256i sb = _mm256_sub_epi16(_mm256_cmpgt_epi16(bs, v), _mm256_cmpgt_epi16(v, bs));
+        __m256i idx = _mm256_add_epi16(_mm256_add_epi16(sa, sb), two);
+        __m256i is0 = _mm256_cmpeq_epi16(idx, zero);
+        __m256i is1 = _mm256_cmpeq_epi16(idx, _mm256_set1_epi16(1));
+        __m256i is3 = _mm256_cmpeq_epi16(idx, _mm256_set1_epi16(3));
+        __m256i is4 = _mm256_cmpeq_epi16(idx, _mm256_set1_epi16(4));
+        __m256i off = _mm256_or_si256(
+            _mm256_or_si256(_mm256_and_si256(is0, _mm256_set1_epi16(t0)), _mm256_and_si256(is1, _mm256_set1_epi16(t1))),
+            _mm256_or_si256(_mm256_and_si256(is3, _mm256_set1_epi16(t3)), _mm256_and_si256(is4, _mm256_set1_epi16(t4)))
+        );
+        __m256i res = _mm256_add_epi16(v, off);
+        res = _mm256_min_epi16(_mm256_max_epi16(res, zero), max_val);
+        _mm256_storeu_si256((__m256i *)(out + x), res);
+    }
+    if (n16 < n)
+        sao_edge_row_10_sse(out + n16, cur + n16, a + n16, b + n16, n - n16, table);
+}
+
+static void sao_edge_row_10(uint16_t *out, const uint16_t *cur,
+                            const uint16_t *a, const uint16_t *b, int n,
+                            const int8_t table[16])
+{
+    if (n >= 16 && __builtin_cpu_supports("avx2"))
+        sao_edge_row_10_avx2(out, cur, a, b, n, table);
+    else
+        sao_edge_row_10_sse(out, cur, a, b, n, table);
+}
+#endif
 /* The luma deblocking filter of 8.7.2.5.3 to 8.7.2.5.7, one four-line
  * segment, eight bits.
  *
