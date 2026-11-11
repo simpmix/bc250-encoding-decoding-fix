@@ -913,7 +913,7 @@ static void two_pred_10_sse(uint16_t *dst, int stride, int w, int h,
 {
     const __m128i add = _mm_set1_epi32(16);
     const __m128i zero = _mm_setzero_si128();
-    const __m128i max_val = _mm_set1_epi32(1023);
+    const __m128i max_val = _mm_set1_epi16(1023);
     for (int r = 0; r < h; r++) {
         const int16_t *sa = a + (size_t)r * stride_p;
         const int16_t *sb = b + (size_t)r * stride_p;
@@ -922,15 +922,14 @@ static void two_pred_10_sse(uint16_t *dst, int stride, int w, int h,
         for (; c + 8 <= w; c += 8) {
             __m128i va = _mm_loadu_si128((const __m128i *)(sa + c));
             __m128i vb = _mm_loadu_si128((const __m128i *)(sb + c));
-            __m128i a_lo = _mm_srai_epi32(_mm_unpacklo_epi16(zero, va), 16);
-            __m128i a_hi = _mm_srai_epi32(_mm_unpackhi_epi16(zero, va), 16);
-            __m128i b_lo = _mm_srai_epi32(_mm_unpacklo_epi16(zero, vb), 16);
-            __m128i b_hi = _mm_srai_epi32(_mm_unpackhi_epi16(zero, vb), 16);
+            __m128i a_lo = _mm_srai_epi32(_mm_unpacklo_epi16(va, va), 16);
+            __m128i a_hi = _mm_srai_epi32(_mm_unpackhi_epi16(va, va), 16);
+            __m128i b_lo = _mm_srai_epi32(_mm_unpacklo_epi16(vb, vb), 16);
+            __m128i b_hi = _mm_srai_epi32(_mm_unpackhi_epi16(vb, vb), 16);
             __m128i s_lo = _mm_srai_epi32(_mm_add_epi32(_mm_add_epi32(a_lo, b_lo), add), 5);
             __m128i s_hi = _mm_srai_epi32(_mm_add_epi32(_mm_add_epi32(a_hi, b_hi), add), 5);
-            s_lo = _mm_min_epi32(_mm_max_epi32(s_lo, zero), max_val);
-            s_hi = _mm_min_epi32(_mm_max_epi32(s_hi, zero), max_val);
             __m128i res = _mm_packs_epi32(s_lo, s_hi);
+            res = _mm_min_epi16(_mm_max_epi16(res, zero), max_val);
             _mm_storeu_si128((__m128i *)(o + c), res);
         }
         for (; c < w; c++) {
@@ -947,7 +946,7 @@ static void two_pred_10_avx2(uint16_t *dst, int stride, int w, int h,
     const int w16 = w & ~15;
     const __m256i add = _mm256_set1_epi32(16);
     const __m256i zero = _mm256_setzero_si256();
-    const __m256i max_val = _mm256_set1_epi32(1023);
+    const __m256i max_val = _mm256_set1_epi16(1023);
     for (int r = 0; r < h; r++) {
         const int16_t *sa = a + (size_t)r * stride_p;
         const int16_t *sb = b + (size_t)r * stride_p;
@@ -963,10 +962,9 @@ static void two_pred_10_avx2(uint16_t *dst, int stride, int w, int h,
             __m256i b32_hi = _mm256_cvtepi16_epi32(vb_hi);
             __m256i s_lo = _mm256_srai_epi32(_mm256_add_epi32(_mm256_add_epi32(a32_lo, b32_lo), add), 5);
             __m256i s_hi = _mm256_srai_epi32(_mm256_add_epi32(_mm256_add_epi32(a32_hi, b32_hi), add), 5);
-            s_lo = _mm256_min_epi32(_mm256_max_epi32(s_lo, zero), max_val);
-            s_hi = _mm256_min_epi32(_mm256_max_epi32(s_hi, zero), max_val);
             __m256i packed = _mm256_packs_epi32(s_lo, s_hi);
             __m256i ordered = _mm256_permute4x64_epi64(packed, 0xd8);
+            ordered = _mm256_min_epi16(_mm256_max_epi16(ordered, zero), max_val);
             _mm256_storeu_si256((__m256i *)(o + c), ordered);
         }
     }
