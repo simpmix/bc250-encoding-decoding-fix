@@ -143,10 +143,14 @@ static void test_hevc_10bit_inter_prediction(void)
     hevc_pps_t pps;
     memset(&pps, 0, sizeof pps);
 
+    hevc_slice_t slice;
+    memset(&slice, 0, sizeof slice);
+
     hevcd_t dec;
     memset(&dec, 0, sizeof dec);
     dec.sps = &sps;
     dec.pps = &pps;
+    dec.slice = &slice;
 
     uint16_t curr_y[128 * 128];
     uint16_t curr_cb[64 * 64];
@@ -160,6 +164,11 @@ static void test_hevc_10bit_inter_prediction(void)
     curr_img.stride[1] = 64;
     curr_img.stride[2] = 64;
     dec.current = &curr_img;
+
+    for (int i = 0; i < 3; i++) {
+        dec.plane[i] = curr_img.plane[i];
+        dec.stride[i] = curr_img.stride[i];
+    }
 
     uint16_t ref0_y[128 * 128], ref0_cb[64 * 64], ref0_cr[64 * 64];
     uint16_t ref1_y[128 * 128], ref1_cb[64 * 64], ref1_cr[64 * 64];
@@ -269,6 +278,25 @@ static void test_hevc_10bit_inter_prediction(void)
             uint16_t expected = (a + b + 1) >> 1;
             uint16_t actual = curr_y[(32 + r) * 128 + (32 + c)];
             assert(actual == expected);
+        }
+    }
+
+    /* 5. Mixed bi-prediction (whole L0 + fractional L1, testing copy14_10_v in interpolate) */
+    hevcd_mvf_t mv_mixed;
+    memset(&mv_mixed, 0, sizeof mv_mixed);
+    mv_mixed.pred_flag = HEVCD_PF_BI;
+    mv_mixed.ref_idx[0] = 0;
+    mv_mixed.ref_idx[1] = 0;
+    mv_mixed.mv[0][0] = 0; /* whole */
+    mv_mixed.mv[0][1] = 0;
+    mv_mixed.mv[1][0] = 2; /* half-pel x */
+    mv_mixed.mv[1][1] = 0;
+
+    hevcd_predict_inter(&dec, 16, 16, 16, 16, &mv_mixed);
+    for (int r = 0; r < 16; r++) {
+        for (int c = 0; c < 16; c++) {
+            uint16_t val = curr_y[(16 + r) * 128 + (16 + c)];
+            assert(val <= 1023);
         }
     }
 
