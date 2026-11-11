@@ -288,6 +288,21 @@ static void copy14_sse(const uint8_t *src, int sp, int w, int h,
     }
 }
 
+static void copy14_10_sse(const uint16_t *src, int sp, int w, int h,
+                          int16_t *out, int pf)
+{
+    for (int r = 0; r < h; r++) {
+        const uint16_t *s = src + (size_t)r * sp;
+        int16_t *o = out + (size_t)r * pf;
+        int c = 0;
+        for (; c + 8 <= w; c += 8) {
+            __m128i v = _mm_loadu_si128((const __m128i *)(s + c));
+            _mm_storeu_si128((__m128i *)(o + c), _mm_slli_epi16(v, 4));
+        }
+        for (; c < w; c++) o[c] = (int16_t)(s[c] << 4);
+    }
+}
+
 /* One prediction down to eight bits. ⚠️ Adding 32 in sixteen bits is safe
  * only because the largest fourteen-bit intermediate is 112 * 255. */
 static void one_pred_sse(uint8_t *dst, int stride, int w, int h,
@@ -624,6 +639,22 @@ static void copy14_avx2(const uint8_t *src, int sp, int w, int h,
 }
 
 __attribute__((target("avx2")))
+static void copy14_10_avx2(const uint16_t *src, int sp, int w, int h,
+                           int16_t *out, int pf)
+{
+    const int w16 = w & ~15;
+    for (int r = 0; r < h && w16; r++) {
+        const uint16_t *s = src + (size_t)r * sp;
+        int16_t *o = out + (size_t)r * pf;
+        for (int c = 0; c < w16; c += 16) {
+            __m256i v = _mm256_loadu_si256((const __m256i *)(s + c));
+            _mm256_storeu_si256((__m256i *)(o + c), _mm256_slli_epi16(v, 4));
+        }
+    }
+    if (w16 < w) copy14_10_sse(src + w16, sp, w - w16, h, out + w16, pf);
+}
+
+__attribute__((target("avx2")))
 static void one_pred_avx2(uint8_t *dst, int stride, int w, int h,
                           const int16_t *a, int stride_a)
 {
@@ -783,6 +814,12 @@ static void copy14_v(const uint8_t *src, int sp, int w, int h,
                      int16_t *out, int pf)
 {
     PICK(copy14, src, sp, w, h, out, pf);
+}
+
+static void copy14_10_v(const uint16_t *src, int sp, int w, int h,
+                        int16_t *out, int pf)
+{
+    PICK(copy14_10, src, sp, w, h, out, pf);
 }
 
 static void one_pred_v(uint8_t *dst, int stride, int w, int h,

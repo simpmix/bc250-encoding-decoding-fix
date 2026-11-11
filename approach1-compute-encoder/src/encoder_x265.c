@@ -40,6 +40,71 @@ static void unpack_p010_row_sse2(uint16_t *dst, const uint16_t *src, size_t n) {
         dst[c] = src[c] >> 6;
     }
 }
+
+__attribute__((target("sse2"), unused))
+static void deinterleave_p010_row_sse2(uint16_t *dst_u, uint16_t *dst_v, const uint16_t *src_uv, size_t n) {
+    size_t c = 0;
+    const __m128i mask = _mm_set1_epi32(0x0000FFFF);
+    for (; c + 8 <= n; c += 8) {
+        __m128i v0 = _mm_loadu_si128((const __m128i *)(src_uv + 2 * c));
+        __m128i v1 = _mm_loadu_si128((const __m128i *)(src_uv + 2 * c + 8));
+        v0 = _mm_srli_epi16(v0, 6);
+        v1 = _mm_srli_epi16(v1, 6);
+        __m128i u32_0 = _mm_and_si128(v0, mask);
+        __m128i u32_1 = _mm_and_si128(v1, mask);
+        __m128i v32_0 = _mm_srli_epi32(v0, 16);
+        __m128i v32_1 = _mm_srli_epi32(v1, 16);
+        __m128i u16 = _mm_packs_epi32(u32_0, u32_1);
+        __m128i v16 = _mm_packs_epi32(v32_0, v32_1);
+        _mm_storeu_si128((__m128i *)(dst_u + c), u16);
+        _mm_storeu_si128((__m128i *)(dst_v + c), v16);
+    }
+    for (; c + 4 <= n; c += 4) {
+        __m128i v = _mm_loadu_si128((const __m128i *)(src_uv + 2 * c));
+        v = _mm_srli_epi16(v, 6);
+        __m128i u32 = _mm_and_si128(v, mask);
+        __m128i v32 = _mm_srli_epi32(v, 16);
+        __m128i u16 = _mm_packs_epi32(u32, u32);
+        __m128i v16 = _mm_packs_epi32(v32, v32);
+        _mm_storel_epi64((__m128i *)(dst_u + c), u16);
+        _mm_storel_epi64((__m128i *)(dst_v + c), v16);
+    }
+    for (; c < n; c++) {
+        dst_u[c] = src_uv[c * 2] >> 6;
+        dst_v[c] = src_uv[c * 2 + 1] >> 6;
+    }
+}
+
+__attribute__((target("sse2"), unused))
+static void deinterleave_nv12_row_sse2(uint8_t *dst_u, uint8_t *dst_v, const uint8_t *src_uv, size_t n) {
+    size_t c = 0;
+    const __m128i mask = _mm_set1_epi16(0x00FF);
+    for (; c + 16 <= n; c += 16) {
+        __m128i v0 = _mm_loadu_si128((const __m128i *)(src_uv + 2 * c));
+        __m128i v1 = _mm_loadu_si128((const __m128i *)(src_uv + 2 * c + 16));
+        __m128i u16_0 = _mm_and_si128(v0, mask);
+        __m128i u16_1 = _mm_and_si128(v1, mask);
+        __m128i v16_0 = _mm_srli_epi16(v0, 8);
+        __m128i v16_1 = _mm_srli_epi16(v1, 8);
+        __m128i u8 = _mm_packus_epi16(u16_0, u16_1);
+        __m128i v8 = _mm_packus_epi16(v16_0, v16_1);
+        _mm_storeu_si128((__m128i *)(dst_u + c), u8);
+        _mm_storeu_si128((__m128i *)(dst_v + c), v8);
+    }
+    for (; c + 8 <= n; c += 8) {
+        __m128i v = _mm_loadu_si128((const __m128i *)(src_uv + 2 * c));
+        __m128i u16 = _mm_and_si128(v, mask);
+        __m128i v16 = _mm_srli_epi16(v, 8);
+        __m128i u8 = _mm_packus_epi16(u16, u16);
+        __m128i v8 = _mm_packus_epi16(v16, v16);
+        _mm_storel_epi64((__m128i *)(dst_u + c), u8);
+        _mm_storel_epi64((__m128i *)(dst_v + c), v8);
+    }
+    for (; c < n; c++) {
+        dst_u[c] = src_uv[c * 2];
+        dst_v[c] = src_uv[c * 2 + 1];
+    }
+}
 #endif
 
 #if defined(__linux__)
@@ -613,12 +678,22 @@ int hevc_x265_encode(hevc_x265_t *x, const hevc_x265_config_t *cfg,
         x->i420_cap = plane_sz;
     }
 
+    int has_sse2_chroma = 0;
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    has_sse2_chroma = __builtin_cpu_supports("sse2");
+#endif
     if (!cfg->ten_bit) {
         /* De-interleave NV12 to I420 */
         for (size_t r = 0; r < plane_h; r++) {
             const uint8_t *src_uv_row = uv + r * (size_t)uv_stride;
             uint8_t *dst_u_row = x->i420_u + r * plane_w;
             uint8_t *dst_v_row = x->i420_v + r * plane_w;
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+            if (has_sse2_chroma) {
+                deinterleave_nv12_row_sse2(dst_u_row, dst_v_row, src_uv_row, plane_w);
+                continue;
+            }
+#endif
             for (size_t c = 0; c < plane_w; c++) {
                 dst_u_row[c] = src_uv_row[c * 2];
                 dst_v_row[c] = src_uv_row[c * 2 + 1];
@@ -630,6 +705,12 @@ int hevc_x265_encode(hevc_x265_t *x, const hevc_x265_config_t *cfg,
             const uint16_t *src_uv_row = (const uint16_t *)(uv + r * (size_t)uv_stride);
             uint16_t *dst_u_row = (uint16_t *)(x->i420_u + r * plane_w * 2);
             uint16_t *dst_v_row = (uint16_t *)(x->i420_v + r * plane_w * 2);
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+            if (has_sse2_chroma) {
+                deinterleave_p010_row_sse2(dst_u_row, dst_v_row, src_uv_row, plane_w);
+                continue;
+            }
+#endif
             for (size_t c = 0; c < plane_w; c++) {
                 dst_u_row[c] = src_uv_row[c * 2] >> 6;
                 dst_v_row[c] = src_uv_row[c * 2 + 1] >> 6;

@@ -543,17 +543,32 @@ uint32_t rc_calculate_pacing_delay_us(rate_control_t *rc) {
         return 0;
     }
 
-    uint64_t elapsed_us = (now_us > rc->pacing.last_dispatch_us) ? (now_us - rc->pacing.last_dispatch_us) : 0;
+    uint64_t target_interval = rc->pacing.target_interval_us;
     uint32_t delay_us = 0;
 
-    if (elapsed_us < rc->pacing.target_interval_us) {
-        uint64_t remaining_us = rc->pacing.target_interval_us - elapsed_us;
+    if (now_us < rc->pacing.last_dispatch_us) {
+        /* Previous scheduled dispatch is in the future */
+        uint64_t remaining_us = (rc->pacing.last_dispatch_us - now_us) + target_interval;
         if (remaining_us > rc->pacing.burst_limit_us) {
             remaining_us = rc->pacing.burst_limit_us;
         }
         delay_us = (uint32_t)remaining_us;
+    } else {
+        uint64_t elapsed_us = now_us - rc->pacing.last_dispatch_us;
+        if (elapsed_us < target_interval) {
+            uint64_t remaining_us = target_interval - elapsed_us;
+            if (remaining_us > rc->pacing.burst_limit_us) {
+                remaining_us = rc->pacing.burst_limit_us;
+            }
+            delay_us = (uint32_t)remaining_us;
+        } else {
+            int64_t late_us = (int64_t)(elapsed_us - target_interval);
+            rc->pacing.accumulated_delay_us = (rc->pacing.accumulated_delay_us > late_us) ?
+                                              (rc->pacing.accumulated_delay_us - late_us) : 0;
+        }
     }
 
+    rc->pacing.accumulated_delay_us += delay_us;
     rc->pacing.last_dispatch_us = now_us + delay_us;
     return delay_us;
 }

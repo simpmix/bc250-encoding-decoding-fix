@@ -55,7 +55,7 @@ arch() {
         useradd -m builder
         cp -a /src /work/src
         VERSION=$(sed -n "s/^pkgver=//p" /work/src/packaging/arch/PKGBUILD | tr -d "[:space:]")
-        VERSION=${VERSION:-0.5.5}
+        VERSION=${VERSION:-0.5.6}
         tar czf "/work/bc250-vaapi-${VERSION}.tar.gz" \
             --exclude=src/.git --exclude=src/debian \
             --exclude=src/packaging/out \
@@ -84,7 +84,7 @@ fedora() {
         rpmdev-setuptree
         cp -a /src /work/src
         VERSION=$(rpm -q --qf "%{version}" --specfile /work/src/packaging/fedora/bc250-vaapi.spec 2>/dev/null | head -1)
-        VERSION=${VERSION:-0.5.5}
+        VERSION=${VERSION:-0.5.6}
         tar czf ~/rpmbuild/SOURCES/bc250-vaapi-${VERSION}.tar.gz \
             --exclude=src/.git --exclude=src/debian \
             --exclude=src/packaging/out \

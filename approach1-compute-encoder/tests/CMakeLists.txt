@@ -77,6 +77,11 @@ add_executable(test_hevc_transform test_hevc_transform.c
 target_include_directories(test_hevc_transform PRIVATE ../src)
 target_link_libraries(test_hevc_transform PRIVATE m)
 
+# Unit test for HEVC 10-bit & 8-bit Motion Compensation and Residual Addition
+add_executable(test_hevc_mc test_hevc_mc.c)
+target_include_directories(test_hevc_mc PRIVATE ../src ${Vulkan_INCLUDE_DIRS} ${LIBVA_INCLUDE_DIRS} ${DRM_INCLUDE_DIRS})
+target_link_libraries(test_hevc_mc PRIVATE bc250_drv_video ${Vulkan_LIBRARIES} ${LIBVA_LIBRARIES} ${DRM_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} m)
+
 enable_testing()
 add_test(NAME BitstreamTest COMMAND test_bitstream)
 add_test(NAME CavlcUnitTest COMMAND test_cavlc)
@@ -89,6 +94,7 @@ add_test(NAME CabacRoundtripTest COMMAND test_cabac_roundtrip)
 add_test(NAME McUnitTest COMMAND test_mc)
 add_test(NAME IntraPredUnitTest COMMAND test_pred)
 add_test(NAME HevcTransformUnitTest COMMAND test_hevc_transform)
+add_test(NAME HevcMcUnitTest COMMAND test_hevc_mc)
 
 # The libx264 backend, when the driver was built with it.
 if(X264_FOUND)

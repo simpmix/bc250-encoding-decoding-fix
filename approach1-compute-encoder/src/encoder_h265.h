@@ -45,6 +45,7 @@ void hevc_encoder_set_fps(hevc_encoder_t *encoder, uint32_t fps);
 uint32_t hevc_encoder_get_fps(const hevc_encoder_t *encoder);
 void hevc_encoder_set_rc_mode(hevc_encoder_t *encoder, rc_mode_t mode);
 rc_mode_t hevc_encoder_get_rc_mode(const hevc_encoder_t *encoder);
+void hevc_encoder_pace_frame(hevc_encoder_t *encoder);
 uint32_t hevc_encoder_get_last_frame_sad(const hevc_encoder_t *encoder);
 void hevc_encoder_set_quality_level(hevc_encoder_t *encoder, uint32_t quality_level);
 uint32_t hevc_encoder_get_quality_level(const hevc_encoder_t *encoder);

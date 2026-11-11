@@ -216,6 +216,8 @@ static void FUNC(interpolate)(const pixel *ref_pic, int stride, int w_pic, int h
     if (!fx && !fy) {
 #if BIT_DEPTH == 8 && (defined(__x86_64__) || defined(_M_X64))
         if (vec) { copy14_v(src, sp, w, h, out, out_stride); return; }
+#elif BIT_DEPTH == 10 && (defined(__x86_64__) || defined(_M_X64))
+        if (vec) { copy14_10_v(src, sp, w, h, out, out_stride); return; }
 #endif
         /* shift3 = 14 - BitDepth: the samples go up to fourteen bits, they
          * do not come down. */

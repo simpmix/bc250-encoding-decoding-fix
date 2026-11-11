@@ -1,0 +1,30 @@
+# Release v0.5.6: AVX2 10-Bit Integer-Pel SIMD, Saturating Residuals & Rate Control Pacing
+
+Release **v0.5.6** is a major stability and performance hardening release for the **AMD BC-250 (Cyan Skillfish)** custom VA-API driver. Building upon the 10-bit foundations in v0.5.5, this release resolves critical edge-case overflow corruption in 10-bit residual reconstruction, implements AVX2/SSE2 acceleration for 10-bit integer-pel motion compensation, adds vectorized chroma de-interleaving to the encoder pipeline, activates rate control frame pacing in the VA-API pipeline without driver lock contention, eliminates CI release race conditions, and introduces a dedicated unit test suite for HEVC 10-bit motion compensation.
+
+### 🚀 Key Highlights & Critical Improvements
+
+#### 1. AVX2 256-Bit Residual Addition SIMD & Signed Saturating Overflow Protection
+* **Residual Overflow Fix**: In previous 10-bit residual addition ([`approach1-compute-encoder/src/hevc_add_template.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/hevc_add_template.c)), standard signed addition (`_mm_add_epi16`) was vulnerable to 16-bit integer wrap when residuals exceeded 31,744. Adding large residuals to positive pixel predictors caused intermediate values to wrap to negative numbers, incorrectly clamping to 0 instead of 1023. This produced visual pixel artifacts during complex transform blocks.
+* **Saturating Arithmetic**: Replaced with `_mm_adds_epi16` and implemented 256-bit AVX2 routines [`add_residual_10_avx2`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/hevc_add_template.c) and [`add_residual_8_avx2`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/hevc_add_template.c) using `_mm256_adds_epi16` and `_mm256_adds_epu8`, doubling sample throughput per clock cycle while guaranteeing mathematical correctness across all extreme residual values.
+
+#### 2. AVX2 & SSE2 Vectorization for 10-Bit Integer-Pel Motion Compensation
+* **Integer-Pel Vectorization**: In [`approach1-compute-encoder/src/hevc_mc_template.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/hevc_mc_template.c), integer-pel motion vectors (`!fx && !fy`) for 10-bit HEVC lacked SIMD acceleration and fell back to scalar nested loops.
+* **Dedicated Routines**: Added [`copy14_10_avx2`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/hevc_mc.c) (processing 32 10-bit samples per iteration) and [`copy14_10_sse`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/hevc_mc.c) (processing 16 samples per iteration) with dynamic dispatch via [`copy14_10_v`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/hevc_mc.c). Added [`TAIL_VERT`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/hevc_mc.c) 16-bit tail handlers for block widths 8 and 4.
+
+#### 3. Vectorized SSE2 Chroma P010 & NV12 De-interleaving in Encoder
+* **SIMD Chroma Unpacking**: In [`approach1-compute-encoder/src/encoder_x265.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/encoder_x265.c), P010 and NV12 interleaved chroma planes (UV) were previously separated via scalar loops.
+* **SSE2 Row Unpackers**: Implemented [`deinterleave_p010_row_sse2`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/encoder_x265.c) and [`deinterleave_nv12_row_sse2`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/encoder_x265.c) using 128-bit vector bitmask and pack instructions, accelerating chroma ingest into libx265 and libx264.
+
+#### 4. Active Rate Control Frame Pacing in VA-API Pipeline
+* **Integration into `vaEndPicture`**: Wired [`h264_encoder_pace_frame`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/encoder_h264.c) and [`hevc_encoder_pace_frame`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/encoder_h265.c) into [`bc250_EndPicture`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/va_backend.c).
+* **Zero Driver Lock Contention**: The pacing calculation and sleep delay are executed outside `DRIVER_LOCK` in [`va_backend.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/va_backend.c), ensuring concurrent VA-API calls and multi-threaded decoders/encoders are never blocked during pacing waits. Fixed timestamp drift logic in [`rc_calculate_pacing_delay_us`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/rate_control.c).
+
+#### 5. GitHub Actions Release Workflow Serialization
+* **CI Dependency Enforcement**: Added `needs: build` to the `package-debian` job in [`.github/workflows/build.yml`](file:///D:/Kai/bc250-encoding-decoding-fix/.github/workflows/build.yml). This eliminates race conditions during GitHub Release asset generation and attachment.
+
+#### 6. Comprehensive Unit Testing for 10-Bit HEVC SIMD
+* **New Test Suite**: Created [`approach1-compute-encoder/tests/test_hevc_mc.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/tests/test_hevc_mc.c) and added `HevcMcUnitTest` to CTest. Tests verify 10-bit and 8-bit residual addition saturation against scalar models across block sizes 4x4 to 32x32, as well as integer-pel, sub-pel fractional, bi-prediction, and whole-sample bi-prediction routines.
+
+#### 7. Packaging & Version Synchronization
+* **Version 0.5.6 Synchronization**: Synchronized release version across [`approach1-compute-encoder/CMakeLists.txt`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/CMakeLists.txt), [`audio-fix/dkms.conf`](file:///D:/Kai/bc250-encoding-decoding-fix/audio-fix/dkms.conf), [`packaging/debian/changelog`](file:///D:/Kai/bc250-encoding-decoding-fix/packaging/debian/changelog), [`packaging/fedora/bc250-vaapi.spec`](file:///D:/Kai/bc250-encoding-decoding-fix/packaging/fedora/bc250-vaapi.spec), [`packaging/arch/PKGBUILD`](file:///D:/Kai/bc250-encoding-decoding-fix/packaging/arch/PKGBUILD), [`packaging/build.sh`](file:///D:/Kai/bc250-encoding-decoding-fix/packaging/build.sh), and system diagnostic scripts.

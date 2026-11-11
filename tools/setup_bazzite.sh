@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bc250-encoding-decoding-fix v0.5.5 - https://github.com/simpmix/bc250-encoding-decoding-fix
+# bc250-encoding-decoding-fix v0.5.6 - https://github.com/simpmix/bc250-encoding-decoding-fix
 #
 # setup_bazzite.sh - Automated installer tailored specifically for Bazzite / Silverblue / Kinoite (rpm-ostree)
 #

@@ -1724,6 +1724,7 @@ VAStatus bc250_EndPicture(VADriverContextP ctx, VAContextID context) {
             surf->ref_count++;
             DRIVER_UNLOCK(data);
 
+            h264_encoder_pace_frame(c->h264_enc);
             written = h264_encoder_encode_frame_ext(c->h264_enc, &data->gpu, surf->image, surf->memory, dest, max_payload);
 
             DRIVER_LOCK(data);
@@ -1734,6 +1735,7 @@ VAStatus bc250_EndPicture(VADriverContextP ctx, VAContextID context) {
             surf->ref_count++;
             DRIVER_UNLOCK(data);
 
+            hevc_encoder_pace_frame(c->hevc_enc);
             written = hevc_encoder_encode_frame(c->hevc_enc, &data->gpu, surf->image, surf->memory, dest, max_payload);
 
             DRIVER_LOCK(data);

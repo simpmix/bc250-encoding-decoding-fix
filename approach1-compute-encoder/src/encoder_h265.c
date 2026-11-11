@@ -885,6 +885,19 @@ rc_mode_t hevc_encoder_get_rc_mode(const hevc_encoder_t *encoder)
     return encoder ? encoder->rc.mode : RC_CQP;
 }
 
+void hevc_encoder_pace_frame(hevc_encoder_t *encoder)
+{
+    if (!encoder || !encoder->rc.pacing.pacing_enabled) return;
+    uint32_t delay_us = rc_calculate_pacing_delay_us(&encoder->rc);
+    if (delay_us > 0) {
+        struct timespec req = {
+            .tv_sec = (time_t)(delay_us / 1000000ULL),
+            .tv_nsec = (long)((delay_us % 1000000ULL) * 1000ULL)
+        };
+        nanosleep(&req, NULL);
+    }
+}
+
 uint32_t hevc_encoder_get_last_frame_sad(const hevc_encoder_t *encoder)
 {
     return encoder ? encoder->last_frame_sad : 0;

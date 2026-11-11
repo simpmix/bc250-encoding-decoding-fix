@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bc250-encoding-decoding-fix v0.5.5 - https://github.com/simpmix/bc250-encoding-decoding-fix
+# bc250-encoding-decoding-fix v0.5.6 - https://github.com/simpmix/bc250-encoding-decoding-fix
 #
 # apply_mangohud_preset.sh - Configures MangoHud to display BC-250 VA-API encode telemetry on-screen in games
 

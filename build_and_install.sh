@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bc250-encoding-decoding-fix v0.5.5 - https://github.com/simpmix/bc250-encoding-decoding-fix
+# bc250-encoding-decoding-fix v0.5.6 - https://github.com/simpmix/bc250-encoding-decoding-fix
 #
 # build_and_install.sh - Automated build, test, and installer for AMD BC-250 custom drivers
 #

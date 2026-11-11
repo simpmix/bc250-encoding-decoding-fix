@@ -2180,6 +2180,18 @@ rc_mode_t h264_encoder_get_rc_mode(const h264_encoder_t *encoder) {
     return encoder ? encoder->rc.mode : RC_LOW_LATENCY;
 }
 
+void h264_encoder_pace_frame(h264_encoder_t *encoder) {
+    if (!encoder || !encoder->rc.pacing.pacing_enabled) return;
+    uint32_t delay_us = rc_calculate_pacing_delay_us(&encoder->rc);
+    if (delay_us > 0) {
+        struct timespec req = {
+            .tv_sec = (time_t)(delay_us / 1000000ULL),
+            .tv_nsec = (long)((delay_us % 1000000ULL) * 1000ULL)
+        };
+        nanosleep(&req, NULL);
+    }
+}
+
 void h264_encoder_set_qp(h264_encoder_t *encoder, int qp) {
     if (encoder) {
         if (qp < 0) qp = 0;

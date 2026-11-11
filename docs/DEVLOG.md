@@ -4490,3 +4490,31 @@ Detailed architectural audit of [`approach1-compute-encoder/src/`](file:///D:/Ka
 * In [`approach1-compute-encoder/src/rate_control.h`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/rate_control.h) and [`approach1-compute-encoder/src/rate_control.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/rate_control.c), added adaptive frame pacing (`rc_pacing_t`) with `rc_calculate_pacing_delay_us()`, clamping burst delays to `burst_limit_us`.
 * Integrated perceptual temporal motion masking in `rc_get_frame_qp()`, adjusting QP by +1 during high-motion bursts (>12.0 SAD per pixel) and -1 during static/low-motion frames (<0.5 SAD per pixel).
 * Added comprehensive unit tests in [`approach1-compute-encoder/tests/test_dynamic_governor.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/tests/test_dynamic_governor.c) validating frame pacing, burst limits, and motion masking.
+
+## 43. Release v0.5.6: AVX2 10-Bit Integer-Pel SIMD, Saturating Residuals & Rate Control Pacing
+
+### 43.1 10-Bit HEVC Residual Signed Overflow Fix & AVX2 Acceleration
+* During rigorous boundary and stress analysis of HEVC 10-bit residual addition in [`approach1-compute-encoder/src/hevc_add_template.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/hevc_add_template.c), an arithmetic overflow hazard was identified: residuals in 10-bit mode can exceed 31,744. Standard 16-bit addition (`_mm_add_epi16`) wrapped into negative signed numbers when added to positive predictor values (0..1023), causing values to clamp incorrectly to 0 instead of 1023.
+* Replaced addition with signed saturating addition (`_mm_adds_epi16`).
+* Implemented 256-bit AVX2 residual addition vector paths for both 10-bit (`add_residual_10_avx2`) and 8-bit (`add_residual_8_avx2`), doubling processing throughput to 16 samples per cycle.
+
+### 43.2 AVX2 & SSE2 Vectorization for 10-Bit Integer-Pel Motion Compensation
+* In [`approach1-compute-encoder/src/hevc_mc_template.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/hevc_mc_template.c), integer-pel motion compensation (`!fx && !fy`) for 10-bit HEVC lacked SIMD acceleration and dropped into a nested scalar shift copy loop.
+* Implemented 256-bit AVX2 routine `copy14_10_avx2` and 128-bit SSE2 routine `copy14_10_sse` in [`approach1-compute-encoder/src/hevc_mc.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/hevc_mc.c), dispatched dynamically via `copy14_10_v`.
+* Added 16-bit vertical filtering tail handlers `TAIL_VERT(8, uint16_t, 2, 8_10)` and `TAIL_VERT(4, uint16_t, 2, 4_10)`.
+
+### 43.3 SIMD Accelerated Chroma UV De-interleaving in Encoder
+* In [`approach1-compute-encoder/src/encoder_x265.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/encoder_x265.c), de-interleaving UV chroma planes for P010 and NV12 was executed via scalar loops.
+* Implemented `deinterleave_p010_row_sse2` and `deinterleave_nv12_row_sse2` using 128-bit vector bitmask and packing operations, eliminating CPU bottlenecks when preparing frames for x265 encoding.
+
+### 43.4 Rate Control Frame Pacing Integration in VA-API Pipeline
+* Wired `h264_encoder_pace_frame` and `hevc_encoder_pace_frame` directly into `bc250_EndPicture` in [`approach1-compute-encoder/src/va_backend.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/va_backend.c).
+* Executed pacing sleep intervals strictly after releasing `DRIVER_LOCK`, preventing multi-threaded contention across concurrent VA-API sessions.
+* Refined timestamp drift calculation in [`approach1-compute-encoder/src/rate_control.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/src/rate_control.c) to handle closely packed frame arrivals.
+
+### 43.5 CI Release Pipeline Serialization
+* In [`.github/workflows/build.yml`](file:///D:/Kai/bc250-encoding-decoding-fix/.github/workflows/build.yml), added `needs: build` to the `package-debian` job, eliminating release asset upload race conditions.
+
+### 43.6 Dedicated Motion Compensation Unit Test Suite
+* Added [`approach1-compute-encoder/tests/test_hevc_mc.c`](file:///D:/Kai/bc250-encoding-decoding-fix/approach1-compute-encoder/tests/test_hevc_mc.c) covering residual addition saturation, edge cases, random inputs, integer-pel motion, fractional sub-pel motion, bi-prediction, and whole-sample bi-prediction.
+* Integrated test into CTest runner as `HevcMcUnitTest`.
