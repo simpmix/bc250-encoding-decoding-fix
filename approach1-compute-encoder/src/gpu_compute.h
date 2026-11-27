@@ -631,7 +631,19 @@ int gpu_compute_sync(gpu_context_t *ctx);
  * nz_masks would both be read from the same wrong slot and therefore still
  * match exactly. PSNR on moving content is what catches it. */
 int gpu_compute_submitted_slot(gpu_context_t *ctx);
+/* Returns 0 when the slot's fence signaled, GPU_SYNC_TIMEOUT when the
+ * BC250_GPU_TIMEOUT_MS / live-caller budget ran out first (the GPU is late,
+ * not broken: the work is still in flight and will complete), and -1 on a
+ * real failure such as VK_ERROR_DEVICE_LOST. */
+#define GPU_SYNC_TIMEOUT (-2)
 int gpu_compute_sync_slot(gpu_context_t *ctx, int slot);
+/* Bounded follow-up wait for a slot whose gpu_compute_sync_slot() timed out:
+ * blocks until the fence signals or budget_ns elapses, with no failover
+ * logging and no perf readback. Same return codes as gpu_compute_sync_slot().
+ * For callers that must know the GPU is really done with a resource (e.g.
+ * vaSyncSurface() releasing an input surface back to the client), where
+ * "late" must mean "wait a bit longer", not "fail". */
+int gpu_compute_settle_slot(gpu_context_t *ctx, int slot, uint64_t budget_ns);
 int gpu_compute_get_quant_staging_data_slot(gpu_context_t *ctx, int slot, void **data, size_t *size);
 int gpu_compute_get_dc_staging_data_slot(gpu_context_t *ctx, int slot, void **data, size_t *size);
 int gpu_compute_get_pred_mode_staging_data_slot(gpu_context_t *ctx, int slot, void **data, size_t *size);

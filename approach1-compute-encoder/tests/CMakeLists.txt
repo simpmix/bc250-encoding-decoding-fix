@@ -25,6 +25,11 @@ target_include_directories(test_va_api PRIVATE ../src ${Vulkan_INCLUDE_DIRS} ${L
 find_package(Threads REQUIRED)
 target_link_libraries(test_va_api PRIVATE bc250_drv_video ${Vulkan_LIBRARIES} ${LIBVA_LIBRARIES} ${DRM_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} m)
 
+# vaSyncSurface must not fail on a GPU fence-wait timeout (BC250_GPU_TIMEOUT_MS=1).
+add_executable(test_sync_timeout test_sync_timeout.c)
+target_include_directories(test_sync_timeout PRIVATE ../src ${Vulkan_INCLUDE_DIRS} ${LIBVA_INCLUDE_DIRS} ${DRM_INCLUDE_DIRS})
+target_link_libraries(test_sync_timeout PRIVATE bc250_drv_video ${Vulkan_LIBRARIES} ${LIBVA_LIBRARIES} ${DRM_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} m)
+
 add_executable(test_cavlc test_cavlc.c ../src/cavlc.c ../src/bitstream.c)
 target_include_directories(test_cavlc PRIVATE ../src)
 
@@ -86,6 +91,7 @@ enable_testing()
 add_test(NAME BitstreamTest COMMAND test_bitstream)
 add_test(NAME CavlcUnitTest COMMAND test_cavlc)
 add_test(NAME VaApiDriverTest COMMAND test_va_api)
+add_test(NAME SyncSurfaceTimeoutTest COMMAND test_sync_timeout WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_test(NAME EncodeBitstreamTest COMMAND test_encode WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_test(NAME HevcEncodeBitstreamTest COMMAND test_hevc_encode WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_test(NAME CpuSimdMeTest COMMAND test_cpu_simd_me)

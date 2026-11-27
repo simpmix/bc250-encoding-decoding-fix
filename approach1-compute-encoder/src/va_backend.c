@@ -1783,6 +1783,20 @@ VAStatus bc250_EndPicture(VADriverContextP ctx, VAContextID context) {
     return VA_STATUS_SUCCESS;
 }
 
+/* Upper bound for vaSyncSurface()'s follow-up wait after the frame-deadline
+ * budget ran out. Long enough for any real contention spike (a heavily loaded
+ * GPU is tens of ms late, not seconds), short enough that a hung GPU is still
+ * reported. BC250_SYNC_SURFACE_TIMEOUT_MS overrides it; 0 means unbounded. */
+static uint64_t sync_surface_settle_ns(void) {
+    const char *e = getenv("BC250_SYNC_SURFACE_TIMEOUT_MS");
+    if (e && *e) {
+        int ms = atoi(e);
+        if (ms > 0) return (uint64_t)ms * 1000000ULL;
+        if (ms == 0) return UINT64_MAX;
+    }
+    return 2000ULL * 1000000ULL;
+}
+
 VAStatus bc250_SyncSurface(VADriverContextP ctx, VASurfaceID render_target) {
     bc250_driver_data *data = get_driver_data(ctx);
     if (!data) return VA_STATUS_ERROR_INVALID_CONTEXT;
@@ -1811,6 +1825,26 @@ VAStatus bc250_SyncSurface(VADriverContextP ctx, VASurfaceID render_target) {
     /* Unlocked wait for GPU fence: only if GPU compute work was submitted for this render target */
     if (slot >= 0) {
         int sync_res = gpu_compute_sync_slot(&data->gpu, slot);
+        if (sync_res == GPU_SYNC_TIMEOUT) {
+            /* The short budget (BC250_GPU_TIMEOUT_MS, or 16 ms for a live
+             * caller) is a frame deadline for the ENCODER, which already met
+             * it: on its own timeout it degraded the frame and wrote the
+             * bitstream on the CPU, so the coded buffer is complete. What
+             * this call still guarantees is that the GPU has stopped reading
+             * the input surface (and, for VPP, finished writing its output)
+             * before the client reuses it - so a late fence is not a failure
+             * here, it only means waiting a little longer. Reporting it as
+             * OPERATION_FAILED made ffmpeg/OBS abort the whole encode with
+             * "Input/output error". The extra wait is still bounded, so a
+             * GPU that really hangs is reported instead of blocking forever. */
+            static int settle_log_count = 0;
+            sync_res = gpu_compute_settle_slot(&data->gpu, slot, sync_surface_settle_ns());
+            if (settle_log_count++ < 5 || (settle_log_count % 300 == 0)) {
+                fprintf(stderr, "[bc250] vaSyncSurface: GPU fence late, waited for the surface to be released (%s)\n",
+                        sync_res == 0 ? "ok" : "still pending");
+            }
+            if (sync_res == GPU_SYNC_TIMEOUT) return VA_STATUS_ERROR_TIMEDOUT;
+        }
         if (sync_res != 0) return VA_STATUS_ERROR_OPERATION_FAILED;
     }
     /* A decode that failed after vaEndPicture had already said yes. */

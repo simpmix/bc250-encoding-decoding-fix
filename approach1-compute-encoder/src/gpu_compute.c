@@ -3880,7 +3880,7 @@ int gpu_compute_sync_slot(gpu_context_t *ctx, int slot) {
             fprintf(stderr, "[bc250-gpu] GPU fence wait timeout (%.1fms) under heavy contention (game load) - engaging failover\n",
                     ctx->last_gpu_duration_ms);
         }
-        return -1;
+        return GPU_SYNC_TIMEOUT;
     }
     if (wait_result != VK_SUCCESS) {
         fprintf(stderr, "[bc250-gpu] vkWaitForFences failed in sync: %d\n", wait_result);
@@ -3921,6 +3921,15 @@ int gpu_compute_sync_slot(gpu_context_t *ctx, int slot) {
     }
 
     return 0;
+}
+
+int gpu_compute_settle_slot(gpu_context_t *ctx, int slot, uint64_t budget_ns) {
+    if (!ctx || slot < 0 || slot > 1) return -1;
+    VkResult r = vkWaitForFences(ctx->device, 1, &ctx->fences[slot], VK_TRUE, budget_ns);
+    if (r == VK_SUCCESS) return 0;
+    if (r == VK_TIMEOUT) return GPU_SYNC_TIMEOUT;
+    fprintf(stderr, "[bc250-gpu] vkWaitForFences failed in settle: %d\n", r);
+    return -1;
 }
 
 int gpu_compute_sync(gpu_context_t *ctx) {
