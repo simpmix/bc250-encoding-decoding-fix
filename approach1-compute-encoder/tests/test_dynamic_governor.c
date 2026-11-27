@@ -204,6 +204,46 @@ static void test_governor_failover_handled(void)
     printf("  ✓ Governor failover unlatch verified!\n");
 }
 
+static void test_governor_update_skipped(void)
+{
+    printf("[TEST] Testing fence-timeout skip accounting...\n");
+
+    /* ffmpeg-like caller: Tier 3 is never entered, but a frame whose fence
+     * wait timed out is still emitted without GPU data and must show up as
+     * a skip, not as a Tier 1/2 frame. */
+    dynamic_governor_t gov;
+    dynamic_governor_init(&gov);
+    gov.allow_failover = false;
+    gov.cpu_offload_enabled = true;
+    dynamic_governor_update(&gov, 5.0);
+    dynamic_governor_update_skipped(&gov, 20.0);
+    assert(dynamic_governor_get_tier(&gov) != GOV_TIER_3_FAILOVER);
+    governor_stats_t st;
+    dynamic_governor_get_stats(&gov, &st);
+    assert(st.total_frames == 2);
+    assert(st.total_failover_frames == 1);
+    assert(st.total_tier0_frames + st.total_tier1_frames + st.total_offload_frames +
+           st.total_failover_frames == st.total_frames);
+
+    /* Live caller: the same 20 ms trips Tier 3, which update() already counts
+     * as a skip - it must not be counted twice. */
+    dynamic_governor_init(&gov);
+    dynamic_governor_update_skipped(&gov, 20.0);
+    assert(dynamic_governor_get_tier(&gov) == GOV_TIER_3_FAILOVER);
+    dynamic_governor_get_stats(&gov, &st);
+    assert(st.total_frames == 1 && st.total_failover_frames == 1);
+
+    /* A forced tier does no accounting; the skip must not be counted either. */
+    dynamic_governor_init(&gov);
+    gov.forced_tier = GOV_TIER_0_GPU_FULL;
+    dynamic_governor_update_skipped(&gov, 20.0);
+    dynamic_governor_get_stats(&gov, &st);
+    assert(st.total_frames == 0 && st.total_failover_frames == 0);
+
+    assert(dynamic_governor_update_skipped(NULL, 20.0) == GOV_TIER_0_GPU_FULL);
+    printf("  ✓ Fence-timeout skips counted once, tiers still sum to total!\n");
+}
+
 static void test_governor_negative_latency(void)
 {
     printf("[TEST] Testing negative latency guard...\n");
@@ -490,6 +530,7 @@ int main(void)
     test_governor_direct_tier0_spike_dwell();
     test_governor_gpu_only_mode();
     test_governor_failover_handled();
+    test_governor_update_skipped();
     test_governor_negative_latency();
     test_governor_telemetry_stats();
     test_governor_deadline_and_predictive_pacing();

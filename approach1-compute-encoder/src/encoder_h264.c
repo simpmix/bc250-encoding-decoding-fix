@@ -3002,7 +3002,9 @@ int h264_encoder_finish_frame(h264_encoder_t *encoder,
             double timeout_ms = gpu_compute_get_last_latency_ms(gpu_ctx);
             if (timeout_ms < 16.0) timeout_ms = 20.0;
             if (!is_idr) {
-                dynamic_governor_update(&encoder->governor, timeout_ms);
+                /* This frame goes out with no GPU data (P_Skip): count it
+                 * as a skip, not under the tier it was meant to run in. */
+                dynamic_governor_update_skipped(&encoder->governor, timeout_ms);
             }
         }
     } else {

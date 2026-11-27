@@ -114,6 +114,18 @@ uint32_t dynamic_governor_get_dropped_frames_prevented(const dynamic_governor_t 
 governor_tier_t dynamic_governor_update(dynamic_governor_t *gov, double gpu_latency_ms);
 
 /**
+ * Same as dynamic_governor_update(), for a frame that was emitted WITHOUT its
+ * GPU data because the fence wait timed out or failed (the encoder certifies
+ * it P_Skip). The frame is accounted as a failover/skip frame instead of under
+ * the tier it would otherwise be counted in, so failover_frames ("Skip" in
+ * bc250_stats) reports every skipped frame - including for callers that never
+ * enter Tier 3 (allow_failover=false, e.g. ffmpeg). The tier counters still
+ * sum to total_frames, and a frame the update already put in Tier 3 is not
+ * counted twice.
+ */
+governor_tier_t dynamic_governor_update_skipped(dynamic_governor_t *gov, double gpu_latency_ms);
+
+/**
  * Gets the current active tier without updating metrics.
  */
 governor_tier_t dynamic_governor_get_tier(const dynamic_governor_t *gov);
