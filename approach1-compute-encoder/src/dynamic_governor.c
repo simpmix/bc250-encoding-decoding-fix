@@ -367,6 +367,23 @@ void dynamic_governor_reset(dynamic_governor_t *gov)
     gov->current_tier = (gov->forced_tier >= 0) ? (governor_tier_t)gov->forced_tier : GOV_TIER_0_GPU_FULL;
 }
 
+governor_tier_t dynamic_governor_update_skipped(dynamic_governor_t *gov, double gpu_latency_ms)
+{
+    if (!gov) return GOV_TIER_0_GPU_FULL;
+    const uint32_t before = gov->total_frames;
+    governor_tier_t tier = dynamic_governor_update(gov, gpu_latency_ms);
+    /* Disabled or forced-tier governors return before accounting the frame. */
+    if (gov->total_frames == before) return tier;
+    switch (gov->current_tier) {
+        case GOV_TIER_0_GPU_FULL:    gov->total_tier0_frames--; break;
+        case GOV_TIER_1_GPU_FAST:    gov->total_tier1_frames--; break;
+        case GOV_TIER_2_CPU_OFFLOAD: gov->total_offload_frames--; break;
+        case GOV_TIER_3_FAILOVER:    return tier; /* already counted as a skip */
+    }
+    gov->total_failover_frames++;
+    return tier;
+}
+
 void dynamic_governor_notify_failover_handled(dynamic_governor_t *gov)
 {
     if (!gov) return;
